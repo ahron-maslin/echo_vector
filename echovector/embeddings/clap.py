@@ -1,0 +1,108 @@
+"""
+CLAP (Contrastive Language-Audio Pretraining) embedding backend.
+"""
+
+from typing import List, Optional
+import numpy as np
+import numpy.typing as npt
+import librosa
+import torch
+from transformers import ClapModel, ClapProcessor
+
+from echovector.embeddings.base import EmbeddingBackend
+
+
+class ClapBackend(EmbeddingBackend):
+    """
+    Embedding backend using the CLAP model from Hugging Face transformers.
+    Supports both audio and text embeddings in the same semantic space.
+    """
+
+    def __init__(
+        self,
+        model_name: str = "laion/clap-htsat-unfused",
+        device: Optional[str] = None
+    ) -> None:
+        """
+        Initialize the CLAP backend.
+
+        Args:
+            model_name: The Hugging Face model identifier.
+            device: Device to run the model on (e.g., 'cpu', 'cuda').
+        """
+        if device is None:
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            self.device = device
+            
+        self.processor = ClapProcessor.from_pretrained(model_name)
+        self.model = ClapModel.from_pretrained(model_name).to(self.device)
+        self.model.eval()
+        
+        # Determine embedding dimension from model config
+        self._embedding_dim = self.model.config.projection_dim
+
+    @property
+    def embedding_dim(self) -> int:
+        """Return the dimensionality of the generated embeddings."""
+        return self._embedding_dim
+
+    def _load_and_resample(self, path: str, target_sr: int) -> np.ndarray:
+        """Load audio and resample to the target sample rate."""
+        audio_array, _ = librosa.load(path, sr=target_sr, mono=True)
+        return audio_array
+
+    def embed_audio(self, audio_paths: List[str]) -> npt.NDArray[np.float32]:
+        """
+        Embed a batch of audio files into the CLAP semantic space.
+
+        Args:
+            audio_paths: List of file paths to audio files.
+
+        Returns:
+            A numpy array of shape (batch_size, embedding_dim).
+        """
+        target_sr = 48000  # Default for CLAP
+        if hasattr(self.processor.feature_extractor, "sampling_rate"):
+            target_sr = self.processor.feature_extractor.sampling_rate
+
+        audios = [self._load_and_resample(path, target_sr) for path in audio_paths]
+        
+        inputs = self.processor(
+            audios=audios,
+            return_tensors="pt",
+            sampling_rate=target_sr
+        )
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        
+        with torch.no_grad():
+            audio_features = self.model.get_audio_features(**inputs)
+            # Normalize to ensure audio and text embeddings share the unit hypersphere
+            audio_features = audio_features / audio_features.norm(dim=-1, keepdim=True)
+            
+        return audio_features.cpu().numpy().astype(np.float32)
+
+    def embed_text(self, texts: List[str]) -> npt.NDArray[np.float32]:
+        """
+        Embed a batch of text queries into the CLAP semantic space.
+
+        Args:
+            texts: List of text strings.
+
+        Returns:
+            A numpy array of shape (batch_size, embedding_dim).
+        """
+        inputs = self.processor(
+            text=texts,
+            return_tensors="pt",
+            padding=True,
+            truncation=True
+        )
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        
+        with torch.no_grad():
+            text_features = self.model.get_text_features(**inputs)
+            # Normalize to ensure audio and text embeddings share the unit hypersphere
+            text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+            
+        return text_features.cpu().numpy().astype(np.float32)

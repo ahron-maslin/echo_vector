@@ -1,0 +1,67 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.mutmut-cache/
+.hypothesis/
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+
+# Ruff
+.ruff_cache/
+
+# ML Models & Data
+*.pt
+*.pth
+*.onnx
+*.bin
+models/
+*.faiss
+*.db
+
+# Audio fixtures (keep generated ones)
+tests/fixtures/audio/*.wav
+tests/fixtures/audio/*.mp3
+tests/fixtures/audio/*.flac
+tests/fixtures/audio/*.m4a
+!tests/fixtures/audio/.gitkeep
+
+# Documentation build
+site/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.local
+
+# Benchmark outputs
+benchmark_results/
