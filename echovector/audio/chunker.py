@@ -10,7 +10,7 @@ class SilenceAwareChunker:
         top_db: float = 60.0,
         min_chunk_length: float = 1.0,
         max_chunk_length: float = 10.0,
-        sample_rate: int = 16000
+        sample_rate: int = 16000,
     ) -> None:
         """Initialize the chunker.
 

@@ -13,7 +13,7 @@ from echovector.audio.streaming import AudioStreamer
 
 @pytest.fixture
 def temp_audio_file() -> str:
-    fd, path = tempfile.mkstemp(suffix='.wav')
+    fd, path = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
 
     # Generate some silence
@@ -57,9 +57,11 @@ def test_extract_metadata_not_found() -> None:
         extract_metadata("nonexistent_file.wav")
 
 
-@patch('echovector.audio.metadata.sf.info')
-@patch('echovector.audio.metadata.librosa')
-def test_extract_metadata_fallback(mock_librosa: patch, mock_sf_info: patch, temp_audio_file: str) -> None:
+@patch("echovector.audio.metadata.sf.info")
+@patch("echovector.audio.metadata.librosa")
+def test_extract_metadata_fallback(
+    mock_librosa: patch, mock_sf_info: patch, temp_audio_file: str
+) -> None:
     mock_sf_info.side_effect = Exception("soundfile failed")
 
     mock_librosa.get_duration.return_value = 1.5
@@ -78,13 +80,13 @@ def test_audio_streamer(temp_audio_file: str) -> None:
     streamer = AudioStreamer(block_size=4000)
     blocks = list(streamer.stream(temp_audio_file))
 
-    assert len(blocks) == 6 # 16000 * 1.5 = 24000, 24000 / 4000 = 6
+    assert len(blocks) == 6  # 16000 * 1.5 = 24000, 24000 / 4000 = 6
     assert all(isinstance(b, np.ndarray) for b in blocks)
     assert all(len(b) == 4000 for b in blocks)
 
 
 def test_audio_streamer_stereo_to_mono() -> None:
-    fd, path = tempfile.mkstemp(suffix='.wav')
+    fd, path = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
 
     sr = 16000

@@ -1,4 +1,5 @@
 """Configuration management for EchoVector."""
+
 import json
 from pathlib import Path
 from typing import Any
@@ -25,7 +26,7 @@ class Config:
         Returns:
             Config instance populated with data from the JSON file.
         """
-        with open(file_path, encoding='utf-8') as f:
+        with open(file_path, encoding="utf-8") as f:
             data = json.load(f)
         return cls(data)
 
@@ -35,7 +36,7 @@ class Config:
         Args:
             file_path: Path where the JSON configuration will be saved.
         """
-        with open(file_path, 'w', encoding='utf-8') as f:
+        with open(file_path, "w", encoding="utf-8") as f:
             json.dump(self._config, f, indent=4)
 
     def get(self, key: str, default: Any = None) -> Any:

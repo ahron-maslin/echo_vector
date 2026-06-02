@@ -8,5 +8,5 @@ __all__ = [
     "AudioProcessor",
     "AudioStreamer",
     "SilenceAwareChunker",
-    "extract_metadata"
+    "extract_metadata",
 ]

@@ -35,7 +35,9 @@ class TestClapBackend(unittest.TestCase):
         mock_audio_features = MagicMock()
         mock_audio_features.norm.return_value = 1.0
         mock_audio_features.__truediv__.return_value = mock_audio_features
-        mock_audio_features.cpu.return_value.numpy.return_value = np.zeros((1, 512), dtype=np.float32)
+        mock_audio_features.cpu.return_value.numpy.return_value = np.zeros(
+            (1, 512), dtype=np.float32
+        )
         mock_model.get_audio_features.return_value = mock_audio_features
 
         # Setup librosa
@@ -66,7 +68,9 @@ class TestClapBackend(unittest.TestCase):
         mock_text_features = MagicMock()
         mock_text_features.norm.return_value = 1.0
         mock_text_features.__truediv__.return_value = mock_text_features
-        mock_text_features.cpu.return_value.numpy.return_value = np.ones((2, 512), dtype=np.float32)
+        mock_text_features.cpu.return_value.numpy.return_value = np.ones(
+            (2, 512), dtype=np.float32
+        )
         mock_model.get_text_features.return_value = mock_text_features
 
         backend = ClapBackend(device="cpu")

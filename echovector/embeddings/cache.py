@@ -26,7 +26,7 @@ class EmbeddingCache:
     def _compute_file_hash(self, filepath: str) -> str:
         """Compute SHA-256 hash of a file's contents."""
         hasher = hashlib.sha256()
-        with open(filepath, 'rb') as f:
+        with open(filepath, "rb") as f:
             while chunk := f.read(8192):
                 hasher.update(chunk)
         return hasher.hexdigest()
@@ -34,7 +34,7 @@ class EmbeddingCache:
     def _compute_text_hash(self, text: str) -> str:
         """Compute SHA-256 hash of a text string."""
         hasher = hashlib.sha256()
-        hasher.update(text.encode('utf-8'))
+        hasher.update(text.encode("utf-8"))
         return hasher.hexdigest()
 
     def _get_cache_path(self, hash_key: str) -> Path:
@@ -57,9 +57,7 @@ class EmbeddingCache:
             return cast("npt.NDArray[np.float32]", np.load(cache_path))
         return None
 
-    def put_audio_embedding(
-        self, filepath: str, embedding: npt.NDArray[np.float32]
-    ) -> None:
+    def put_audio_embedding(self, filepath: str, embedding: npt.NDArray[np.float32]) -> None:
         """Store embedding for an audio file in cache.
 
         Args:

@@ -1,12 +1,10 @@
 """Evaluation metrics for comparing audio vectors and embeddings."""
+
 import numpy as np
 import numpy.typing as npt
 
 
-def cosine_similarity(
-    vec1: npt.NDArray[np.float32],
-    vec2: npt.NDArray[np.float32]
-) -> float:
+def cosine_similarity(vec1: npt.NDArray[np.float32], vec2: npt.NDArray[np.float32]) -> float:
     """Calculate the cosine similarity between two vectors.
 
     Args:
@@ -29,10 +27,8 @@ def cosine_similarity(
     similarity = dot_product / (norm1 * norm2)
     return float(similarity)
 
-def euclidean_distance(
-    vec1: npt.NDArray[np.float32],
-    vec2: npt.NDArray[np.float32]
-) -> float:
+
+def euclidean_distance(vec1: npt.NDArray[np.float32], vec2: npt.NDArray[np.float32]) -> float:
     """Calculate the Euclidean distance between two vectors.
 
     Args:

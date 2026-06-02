@@ -25,7 +25,7 @@ def test_search_result_creation() -> None:
         filepath="audio.wav",
         timestamp_range=TimestampRange(1.0, 3.0),
         score=0.95,
-        metadata={"key": "value"}
+        metadata={"key": "value"},
     )
     assert res.filepath == "audio.wav"
     assert res.score == 0.95
@@ -61,7 +61,9 @@ def test_search_filter_min_score() -> None:
 def test_search_filter_metadata() -> None:
     r1 = SearchResult("a.wav", TimestampRange(0, 1), 0.9, metadata={"lang": "en"})
     r2 = SearchResult("b.wav", TimestampRange(0, 1), 0.8, metadata={"lang": "es"})
-    r3 = SearchResult("c.wav", TimestampRange(0, 1), 0.7, metadata={"lang": "en", "author": "john"})
+    r3 = SearchResult(
+        "c.wav", TimestampRange(0, 1), 0.7, metadata={"lang": "en", "author": "john"}
+    )
 
     sf = SearchFilter(metadata_filters={"lang": "en"})
     filtered = sf.apply([r1, r2, r3])

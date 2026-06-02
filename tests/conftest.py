@@ -1,6 +1,7 @@
 """
 Pytest configuration and shared fixtures for tests.
 """
+
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
@@ -22,6 +23,7 @@ def temp_audio_dir() -> Generator[Path, None, None]:
     with tempfile.TemporaryDirectory() as tmpdirname:
         yield Path(tmpdirname)
 
+
 @pytest.fixture
 def synthetic_sine_audio(temp_audio_dir: Path) -> Path:
     """
@@ -38,6 +40,7 @@ def synthetic_sine_audio(temp_audio_dir: Path) -> Path:
     audio_data = generate_sine_wave(frequency=440.0, duration=0.5, sample_rate=sample_rate)
     save_audio(audio_path, audio_data, sample_rate)
     return audio_path
+
 
 @pytest.fixture
 def stereo_sine_audio(temp_audio_dir: Path) -> Path:

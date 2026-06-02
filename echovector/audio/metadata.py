@@ -8,6 +8,7 @@ import soundfile as sf
 @dataclass
 class AudioMetadata:
     """Metadata for an audio file."""
+
     duration: float
     sample_rate: int
     channels: int
@@ -45,7 +46,7 @@ def extract_metadata(file_path: str) -> AudioMetadata:
         sample_rate = int(librosa.get_samplerate(file_path))
         y, _ = librosa.load(file_path, sr=None, mono=False)
         channels = int(y.shape[0]) if y.ndim > 1 else 1
-        fmt = str(os.path.splitext(file_path)[1].lstrip('.'))
+        fmt = str(os.path.splitext(file_path)[1].lstrip("."))
 
     return AudioMetadata(
         duration=duration,
@@ -53,5 +54,5 @@ def extract_metadata(file_path: str) -> AudioMetadata:
         channels=channels,
         format=fmt,
         file_size=file_size,
-        file_path=file_path
+        file_path=file_path,
     )

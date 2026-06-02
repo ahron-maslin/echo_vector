@@ -8,12 +8,14 @@ from echovector.search.filters import SearchFilter
 
 class MockEmbedder:
     """Mock embedder for testing."""
+
     def embed_text(self, text: str) -> list[float]:
         return [0.1, 0.2, 0.3]
 
 
 class MockIndex:
     """Mock index for testing."""
+
     def __init__(self, results: list[dict[str, Any]]) -> None:
         self.results = results
         self.last_vector: list[float] | None = None
@@ -63,6 +65,7 @@ def test_search_engine_with_filters() -> None:
 
     assert len(results) == 1
     assert results[0].filepath == "a.wav"
+
 
 def test_search_engine_top_k_slice_after_filter() -> None:
     raw_results = [

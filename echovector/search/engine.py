@@ -8,6 +8,7 @@ from echovector.search.results import SearchResult, TimestampRange
 
 class Embedder(Protocol):
     """Protocol for text embedders."""
+
     def embed_text(self, text: str) -> list[float]:
         """Embed a text query into a vector."""
         ...
@@ -15,6 +16,7 @@ class Embedder(Protocol):
 
 class VectorIndex(Protocol):
     """Protocol for vector indices."""
+
     def search(self, vector: list[float], top_k: int) -> list[dict[str, Any]]:
         """Search the index.
 
@@ -42,10 +44,7 @@ class SearchEngine:
         self._embedder = embedder
 
     def search(
-        self,
-        query: str,
-        top_k: int = 10,
-        filters: SearchFilter | None = None
+        self, query: str, top_k: int = 10, filters: SearchFilter | None = None
     ) -> list[SearchResult]:
         """Search the index for a given query.
 
@@ -73,7 +72,7 @@ class SearchEngine:
                 filepath=raw["filepath"],
                 timestamp_range=TimestampRange(start=raw["start"], end=raw["end"]),
                 score=raw["score"],
-                metadata=metadata
+                metadata=metadata,
             )
             results.append(result)
 

@@ -24,13 +24,13 @@ class SQLiteStore(BaseStore):
         """Initialize the database schema."""
         cursor = self._conn.cursor()
         cursor.execute(
-            '''
+            """
             CREATE TABLE IF NOT EXISTS metadata (
                 int_id INTEGER PRIMARY KEY,
                 string_id TEXT UNIQUE NOT NULL,
                 metadata_json TEXT
             )
-            '''
+            """
         )
         self._conn.commit()
 
@@ -57,10 +57,10 @@ class SQLiteStore(BaseStore):
         ]
 
         cursor.executemany(
-            '''
+            """
             INSERT OR REPLACE INTO metadata (int_id, string_id, metadata_json)
             VALUES (?, ?, ?)
-            ''',
+            """,
             data,
         )
         self._conn.commit()

@@ -18,7 +18,7 @@ class SearchFilter:
         self,
         filepaths: list[str] | None = None,
         min_score: float | None = None,
-        metadata_filters: dict[str, Any] | None = None
+        metadata_filters: dict[str, Any] | None = None,
     ) -> None:
         """Initialize the search filter.
 
@@ -50,9 +50,6 @@ class SearchFilter:
 
         if self.metadata_filters:
             for key, val in self.metadata_filters.items():
-                filtered = [
-                    r for r in filtered
-                    if r.metadata and r.metadata.get(key) == val
-                ]
+                filtered = [r for r in filtered if r.metadata and r.metadata.get(key) == val]
 
         return filtered

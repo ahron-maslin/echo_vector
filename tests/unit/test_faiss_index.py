@@ -45,9 +45,7 @@ def test_faiss_index_add_and_search() -> None:
     index = FaissIndex(dimension=4)
 
     # First batch
-    embeddings1 = np.array(
-        [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]], dtype=np.float32
-    )
+    embeddings1 = np.array([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]], dtype=np.float32)
     ids1 = ["a", "b"]
     meta1 = [{"val": 1}, {"val": 2}]
 
@@ -55,9 +53,7 @@ def test_faiss_index_add_and_search() -> None:
     assert index.index.ntotal == 2
 
     # Second batch (incremental)
-    embeddings2 = np.array(
-        [[0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]], dtype=np.float32
-    )
+    embeddings2 = np.array([[0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]], dtype=np.float32)
     ids2 = ["c", "d"]
     meta2 = [{"val": 3}, {"val": 4}]
 
@@ -70,7 +66,12 @@ def test_faiss_index_add_and_search() -> None:
 
     assert res_ids[0][0] == "a"
     assert res_meta[0][0] == {"val": 1}
-    assert res_ids[0][1] in ("b", "c", "d", None)  # Since inner product with orthogonal vectors is 0
+    assert res_ids[0][1] in (
+        "b",
+        "c",
+        "d",
+        None,
+    )  # Since inner product with orthogonal vectors is 0
 
 
 def test_faiss_index_search_empty() -> None:

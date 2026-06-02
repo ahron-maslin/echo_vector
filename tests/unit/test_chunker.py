@@ -4,7 +4,9 @@ from echovector.audio.chunker import SilenceAwareChunker
 
 
 def test_silence_aware_chunker() -> None:
-    chunker = SilenceAwareChunker(top_db=60.0, min_chunk_length=1.0, max_chunk_length=2.0, sample_rate=1000)
+    chunker = SilenceAwareChunker(
+        top_db=60.0, min_chunk_length=1.0, max_chunk_length=2.0, sample_rate=1000
+    )
 
     # Create audio: 1.5s sound, 1s silence, 2.5s sound
     sound1 = np.ones(1500, dtype=np.float32)

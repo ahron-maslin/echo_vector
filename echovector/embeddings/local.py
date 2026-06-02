@@ -1,4 +1,5 @@
 """Deterministic local embedding backend for offline smoke tests."""
+
 from typing import cast
 
 import librosa

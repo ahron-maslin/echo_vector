@@ -9,7 +9,9 @@ import soundfile as sf
 from echovector import EchoVector
 
 
-def _write_tone(path: Path, frequency: float = 440.0, duration: float = 1.0, sr: int = 16_000) -> None:
+def _write_tone(
+    path: Path, frequency: float = 440.0, duration: float = 1.0, sr: int = 16_000
+) -> None:
     t = np.linspace(0, duration, int(sr * duration), endpoint=False)
     sf.write(path, (0.25 * np.sin(2 * np.pi * frequency * t)).astype(np.float32), sr)
 
@@ -20,7 +22,13 @@ def test_full_round_trip(tmp_path: Path) -> None:
     audio = tmp_path / "tone.wav"
     _write_tone(audio, frequency=880.0)
 
-    ev = EchoVector(store_dir=tmp_path / "idx", backend="local", chunk_seconds=1.0, overlap_seconds=0.0, sample_rate=16_000)
+    ev = EchoVector(
+        store_dir=tmp_path / "idx",
+        backend="local",
+        chunk_seconds=1.0,
+        overlap_seconds=0.0,
+        sample_rate=16_000,
+    )
     count = ev.index(audio)
 
     assert count == 1
@@ -36,7 +44,13 @@ def test_incremental_indexing_skips_already_indexed_files(tmp_path: Path) -> Non
     audio = tmp_path / "tone.wav"
     _write_tone(audio)
 
-    ev = EchoVector(store_dir=tmp_path / "idx", backend="local", chunk_seconds=1.0, overlap_seconds=0.0, sample_rate=16_000)
+    ev = EchoVector(
+        store_dir=tmp_path / "idx",
+        backend="local",
+        chunk_seconds=1.0,
+        overlap_seconds=0.0,
+        sample_rate=16_000,
+    )
     first = ev.index(audio)
     second = ev.index(audio)
 
@@ -51,7 +65,13 @@ def test_force_reindex_replaces_existing(tmp_path: Path) -> None:
     audio = tmp_path / "tone.wav"
     _write_tone(audio)
 
-    ev = EchoVector(store_dir=tmp_path / "idx", backend="local", chunk_seconds=1.0, overlap_seconds=0.0, sample_rate=16_000)
+    ev = EchoVector(
+        store_dir=tmp_path / "idx",
+        backend="local",
+        chunk_seconds=1.0,
+        overlap_seconds=0.0,
+        sample_rate=16_000,
+    )
     ev.index(audio)
     ev.index(audio, force=True)
 
@@ -64,7 +84,13 @@ def test_reset_clears_index(tmp_path: Path) -> None:
     audio = tmp_path / "tone.wav"
     _write_tone(audio)
 
-    ev = EchoVector(store_dir=tmp_path / "idx", backend="local", chunk_seconds=1.0, overlap_seconds=0.0, sample_rate=16_000)
+    ev = EchoVector(
+        store_dir=tmp_path / "idx",
+        backend="local",
+        chunk_seconds=1.0,
+        overlap_seconds=0.0,
+        sample_rate=16_000,
+    )
     ev.index(audio)
     assert ev.stats()["chunks"] == 1
 
@@ -82,7 +108,13 @@ def test_multi_file_search_returns_best_match(tmp_path: Path) -> None:
     _write_tone(low, frequency=110.0)
     _write_tone(high, frequency=880.0)
 
-    ev = EchoVector(store_dir=tmp_path / "idx", backend="local", chunk_seconds=1.0, overlap_seconds=0.0, sample_rate=16_000)
+    ev = EchoVector(
+        store_dir=tmp_path / "idx",
+        backend="local",
+        chunk_seconds=1.0,
+        overlap_seconds=0.0,
+        sample_rate=16_000,
+    )
     ev.index([low, high])
 
     results = ev.search("high bright treble tone", top_k=2)
@@ -98,7 +130,13 @@ def test_index_directory_recursive(tmp_path: Path) -> None:
     _write_tone(tmp_path / "a.wav", frequency=440.0)
     _write_tone(sub / "b.wav", frequency=880.0)
 
-    ev = EchoVector(store_dir=tmp_path / "idx", backend="local", chunk_seconds=1.0, overlap_seconds=0.0, sample_rate=16_000)
+    ev = EchoVector(
+        store_dir=tmp_path / "idx",
+        backend="local",
+        chunk_seconds=1.0,
+        overlap_seconds=0.0,
+        sample_rate=16_000,
+    )
     count = ev.index(tmp_path / "idx" if False else tmp_path, recursive=True)
 
     assert count == 2
@@ -110,7 +148,13 @@ def test_search_top_k_limits_results(tmp_path: Path) -> None:
     for i in range(5):
         _write_tone(tmp_path / f"tone_{i}.wav", frequency=220.0 * (i + 1))
 
-    ev = EchoVector(store_dir=tmp_path / "idx", backend="local", chunk_seconds=1.0, overlap_seconds=0.0, sample_rate=16_000)
+    ev = EchoVector(
+        store_dir=tmp_path / "idx",
+        backend="local",
+        chunk_seconds=1.0,
+        overlap_seconds=0.0,
+        sample_rate=16_000,
+    )
     ev.index(tmp_path)
 
     assert len(ev.search("tone", top_k=3)) == 3

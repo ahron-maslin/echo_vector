@@ -12,6 +12,7 @@ class TimestampRange:
         start: Start time in seconds.
         end: End time in seconds.
     """
+
     start: float
     end: float
 
@@ -33,6 +34,7 @@ class SearchResult:
         score: The search score (e.g., cosine similarity).
         metadata: Optional metadata dictionary.
     """
+
     filepath: str
     timestamp_range: TimestampRange
     score: float

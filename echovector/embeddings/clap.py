@@ -19,7 +19,6 @@ except ImportError:  # pragma: no cover
     _CLAP_AVAILABLE = False
 
 
-
 class ClapBackend(EmbeddingBackend):
     """Embedding backend using the CLAP model from Hugging Face transformers.
 

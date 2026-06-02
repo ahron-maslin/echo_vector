@@ -24,8 +24,7 @@ def get_engine() -> EchoVector:
     """Return the active EchoVector engine."""
     if _default_engine is None:
         raise RuntimeError(
-            "No EchoVector engine configured. "
-            "Call configure_engine() before starting the server."
+            "No EchoVector engine configured. Call configure_engine() before starting the server."
         )
     return _default_engine
 
