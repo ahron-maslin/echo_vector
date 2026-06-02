@@ -2,7 +2,7 @@
 
 import json
 import sqlite3
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from .base import BaseStore
 
@@ -35,7 +35,7 @@ class SQLiteStore(BaseStore):
         self._conn.commit()
 
     def add(
-        self, int_ids: List[int], string_ids: List[str], metadata_list: List[Dict[str, Any]]
+        self, int_ids: list[int], string_ids: list[str], metadata_list: list[dict[str, Any]]
     ) -> None:
         """Add metadata and ID mappings to the store.
 
@@ -66,8 +66,8 @@ class SQLiteStore(BaseStore):
         self._conn.commit()
 
     def get_by_int_ids(
-        self, int_ids: List[int]
-    ) -> Tuple[List[Optional[str]], List[Optional[Dict[str, Any]]]]:
+        self, int_ids: list[int]
+    ) -> tuple[list[str | None], list[dict[str, Any] | None]]:
         """Retrieve string IDs and metadata for a list of integer IDs.
 
         Args:
@@ -81,20 +81,15 @@ class SQLiteStore(BaseStore):
 
         cursor = self._conn.cursor()
         placeholders = ",".join("?" for _ in int_ids)
-        cursor.execute(
-            f'''
-            SELECT int_id, string_id, metadata_json
-            FROM metadata
-            WHERE int_id IN ({placeholders})
-            ''',
-            int_ids,
-        )
+        cols = "int_id, string_id, metadata_json"
+        query = f"SELECT {cols} FROM metadata WHERE int_id IN ({placeholders})"  # noqa: S608
+        cursor.execute(query, int_ids)
 
         rows = cursor.fetchall()
         row_dict = {row[0]: (row[1], json.loads(row[2])) for row in rows}
 
-        string_ids: List[Optional[str]] = []
-        metadata: List[Optional[Dict[str, Any]]] = []
+        string_ids: list[str | None] = []
+        metadata: list[dict[str, Any] | None] = []
         for i_id in int_ids:
             if i_id in row_dict:
                 string_ids.append(row_dict[i_id][0])
@@ -115,6 +110,49 @@ class SQLiteStore(BaseStore):
         cursor.execute("SELECT MAX(int_id) FROM metadata")
         row = cursor.fetchone()
         return int(row[0]) if row[0] is not None else -1
+
+    def has_filepath(self, filepath: str) -> bool:
+        """Return True if any chunk from filepath is already stored.
+
+        Args:
+            filepath: Absolute or relative path of the source audio file.
+        """
+        cursor = self._conn.cursor()
+        cursor.execute(
+            "SELECT 1 FROM metadata WHERE string_id LIKE ? LIMIT 1",
+            (filepath + "#%",),
+        )
+        return cursor.fetchone() is not None
+
+    def get_int_ids_for_filepath(self, filepath: str) -> list[int]:
+        """Return all integer IDs belonging to chunks of filepath.
+
+        Args:
+            filepath: Source audio file path.
+        """
+        cursor = self._conn.cursor()
+        cursor.execute(
+            "SELECT int_id FROM metadata WHERE string_id LIKE ?",
+            (filepath + "#%",),
+        )
+        return [row[0] for row in cursor.fetchall()]
+
+    def delete_by_filepath(self, filepath: str) -> list[int]:
+        """Delete all chunks for filepath and return their integer IDs.
+
+        Args:
+            filepath: Source audio file path.
+
+        Returns:
+            List of integer IDs that were removed.
+        """
+        int_ids = self.get_int_ids_for_filepath(filepath)
+        if int_ids:
+            placeholders = ",".join("?" for _ in int_ids)
+            delete_query = f"DELETE FROM metadata WHERE int_id IN ({placeholders})"  # noqa: S608
+            self._conn.execute(delete_query, int_ids)
+            self._conn.commit()
+        return int_ids
 
     def close(self) -> None:
         """Close the database connection."""

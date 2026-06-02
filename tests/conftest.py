@@ -1,19 +1,21 @@
 """
 Pytest configuration and shared fixtures for tests.
 """
-import pytest
 import tempfile
-import numpy as np
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator
+
+import numpy as np
+import pytest
 
 from tests.fixtures.audio_generators import generate_sine_wave, save_audio
+
 
 @pytest.fixture
 def temp_audio_dir() -> Generator[Path, None, None]:
     """
     Fixture providing a temporary directory for audio files.
-    
+
     Yields:
         Path object pointing to the temporary directory.
     """
@@ -24,10 +26,10 @@ def temp_audio_dir() -> Generator[Path, None, None]:
 def synthetic_sine_audio(temp_audio_dir: Path) -> Path:
     """
     Fixture generating a synthetic sine wave audio file and returning its path.
-    
+
     Args:
         temp_audio_dir: Temporary directory path.
-        
+
     Returns:
         Path to the generated temporary .wav file.
     """
@@ -41,10 +43,10 @@ def synthetic_sine_audio(temp_audio_dir: Path) -> Path:
 def stereo_sine_audio(temp_audio_dir: Path) -> Path:
     """
     Fixture generating a synthetic stereo sine wave audio file.
-    
+
     Args:
         temp_audio_dir: Temporary directory path.
-        
+
     Returns:
         Path to the generated temporary stereo .wav file.
     """

@@ -7,6 +7,6 @@ from .store import SQLiteStore
 __all__ = [
     "BaseIndex",
     "BaseStore",
-    "SQLiteStore",
     "FaissIndex",
+    "SQLiteStore",
 ]

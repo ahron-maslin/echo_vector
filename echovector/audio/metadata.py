@@ -1,8 +1,8 @@
 import os
-from typing import Any, Dict
 from dataclasses import dataclass
-import soundfile as sf
+
 import librosa
+import soundfile as sf
 
 
 @dataclass
@@ -24,7 +24,7 @@ def extract_metadata(file_path: str) -> AudioMetadata:
 
     Returns:
         AudioMetadata object containing extracted metadata.
-        
+
     Raises:
         FileNotFoundError: If the file does not exist.
     """
@@ -32,7 +32,7 @@ def extract_metadata(file_path: str) -> AudioMetadata:
         raise FileNotFoundError(f"Audio file not found: {file_path}")
 
     file_size = os.path.getsize(file_path)
-    
+
     try:
         info = sf.info(file_path)
         duration = float(info.duration)

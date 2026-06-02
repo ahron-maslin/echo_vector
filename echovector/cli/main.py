@@ -1,19 +1,13 @@
-"""
-Command-line interface for EchoVector using Typer and Rich.
-"""
-import time
-from typing import List
+"""Command-line interface for EchoVector."""
+
+from pathlib import Path
+from typing import Annotated
 
 import typer
 from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    Progress,
-    SpinnerColumn,
-    TaskProgressColumn,
-    TextColumn,
-)
 from rich.table import Table
+
+from echovector import EchoVector
 
 app = typer.Typer(
     name="echovector",
@@ -22,85 +16,150 @@ app = typer.Typer(
 )
 console = Console()
 
+
+def _open_engine(store_dir: Path, backend: str, device: str | None) -> EchoVector:
+    if device:
+        return EchoVector(store_dir=store_dir, backend=backend, device=device)
+    return EchoVector(store_dir=store_dir, backend=backend)
+
+
 @app.command()
 def index(
-    files: List[str] = typer.Argument(..., help="Audio files or directories to index."),
-    recursive: bool = typer.Option(
-        False, "--recursive", "-r", help="Recursively search directories for audio files."
-    ),
+    files: Annotated[
+        list[Path],
+        typer.Argument(help="Audio files or directories to index."),
+    ],
+    recursive: Annotated[
+        bool,
+        typer.Option("--recursive", "-r", help="Recursively search directories for audio files."),
+    ] = False,
+    store_dir: Annotated[
+        Path,
+        typer.Option("--store-dir", help="Directory for index files."),
+    ] = Path(".echovector"),
+    backend: Annotated[str, typer.Option("--backend", help="Embedding backend to use.")] = "clap",
+    device: Annotated[
+        str | None,
+        typer.Option("--device", help="Model device, e.g. cpu or cuda."),
+    ] = None,
+    reset: Annotated[
+        bool,
+        typer.Option("--reset", help="Clear the existing index before indexing."),
+    ] = False,
+    chunk_seconds: Annotated[
+        float,
+        typer.Option("--chunk-seconds", help="Audio chunk size to embed."),
+    ] = 10.0,
+    overlap_seconds: Annotated[
+        float,
+        typer.Option("--overlap-seconds", help="Overlap between adjacent chunks."),
+    ] = 1.0,
 ) -> None:
-    """
-    Index audio files for semantic search.
-    """
-    console.print(f"[bold green]Starting indexing for {len(files)} target(s)...[/bold green]")
-    
-    # Simulate work with a progress bar
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        console=console,
-    ) as progress:
-        task1 = progress.add_task("[cyan]Processing files...", total=100)
-        
-        for _ in range(100):
-            time.sleep(0.01)  # Mock work
-            progress.update(task1, advance=1)
-            
-    console.print("[bold green]✓ Indexing complete.[/bold green]")
+    """Index audio files for search."""
+    try:
+        if device:
+            engine = EchoVector(
+                store_dir=store_dir,
+                backend=backend,
+                device=device,
+                chunk_seconds=chunk_seconds,
+                overlap_seconds=overlap_seconds,
+            )
+        else:
+            engine = EchoVector(
+                store_dir=store_dir,
+                backend=backend,
+                chunk_seconds=chunk_seconds,
+                overlap_seconds=overlap_seconds,
+            )
+        if reset:
+            engine.reset()
+        count = engine.index(files, recursive=recursive)
+    except Exception as exc:
+        console.print(f"[bold red]Indexing failed:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    console.print(f"[bold green]Indexing complete.[/bold green] Indexed {count} chunk(s).")
+    console.print(f"[dim]Store: {store_dir}[/dim]")
+
 
 @app.command()
 def search(
-    query: str = typer.Argument(..., help="Text query to search for."),
-    top_k: int = typer.Option(5, "--top-k", "-k", help="Number of top results to return."),
+    query: Annotated[str, typer.Argument(help="Text query to search for.")],
+    top_k: Annotated[
+        int,
+        typer.Option("--top-k", "-k", help="Number of top results to return."),
+    ] = 5,
+    store_dir: Annotated[
+        Path,
+        typer.Option("--store-dir", help="Directory containing the index."),
+    ] = Path(".echovector"),
+    backend: Annotated[
+        str,
+        typer.Option("--backend", help="Embedding backend used for the index."),
+    ] = "clap",
+    device: Annotated[
+        str | None,
+        typer.Option("--device", help="Model device, e.g. cpu or cuda."),
+    ] = None,
 ) -> None:
-    """
-    Search for a text query within indexed audio files.
-    """
-    console.print(f"[bold blue]Searching for:[/bold blue] '{query}'")
-    
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-    ) as progress:
-        task = progress.add_task("[cyan]Searching index...", total=None)
-        time.sleep(0.5)  # Mock search time
-        progress.update(task, completed=100)
-        
+    """Search an existing vector index without scanning audio files."""
+    try:
+        engine = _open_engine(store_dir=store_dir, backend=backend, device=device)
+        results = engine.search(query, top_k=top_k)
+    except Exception as exc:
+        console.print(f"[bold red]Search failed:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+
     table = Table(title=f"Top {top_k} Results for '{query}'")
     table.add_column("Score", justify="right", style="cyan", no_wrap=True)
     table.add_column("File", style="magenta")
     table.add_column("Timestamp", justify="right", style="green")
-    
-    # Simulate finding results
-    for i in range(min(top_k, 3)):
-        score = 0.95 - (i * 0.05)
-        table.add_row(f"{score:.4f}", f"audio_file_{i+1}.wav", f"{(i+1)*10.5:.1f}s")
-        
-    if top_k == 0:
-        console.print("[yellow]No results requested.[/yellow]")
-    else:
+
+    for result in results:
+        table.add_row(
+            f"{result.score:.4f}",
+            str(result.metadata.get("filename", result.filepath)),
+            f"{result.timestamp_range.start:.1f}s-{result.timestamp_range.end:.1f}s",
+        )
+
+    if results:
         console.print(table)
+    else:
+        console.print("[yellow]No results found.[/yellow]")
+
 
 @app.command()
-def stats() -> None:
-    """
-    Display statistics about the current index.
-    """
-    console.print("[bold yellow]Index Statistics[/bold yellow]")
-    
-    table = Table(show_header=False)
+def stats(
+    store_dir: Annotated[
+        Path,
+        typer.Option("--store-dir", help="Directory containing the index."),
+    ] = Path(".echovector"),
+    backend: Annotated[
+        str,
+        typer.Option("--backend", help="Embedding backend used for the index."),
+    ] = "clap",
+    device: Annotated[
+        str | None,
+        typer.Option("--device", help="Model device, e.g. cpu or cuda."),
+    ] = None,
+) -> None:
+    """Display statistics about the current index."""
+    try:
+        stats_data = _open_engine(store_dir=store_dir, backend=backend, device=device).stats()
+    except Exception as exc:
+        console.print(f"[bold red]Stats failed:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    table = Table(title="Index Statistics", show_header=False)
     table.add_column("Metric", style="cyan")
     table.add_column("Value", style="magenta")
-    
-    # Mock stats
-    table.add_row("Total Files Indexed", "42")
-    table.add_row("Total Audio Duration", "14h 32m")
-    table.add_row("Index Size", "156 MB")
-    
+
+    for key, value in stats_data.items():
+        table.add_row(key, str(value))
+
     console.print(table)
+
 
 if __name__ == "__main__":
     app()

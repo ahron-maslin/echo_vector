@@ -2,7 +2,7 @@
 
 import os
 import tempfile
-from typing import Generator
+from collections.abc import Generator
 
 import numpy as np
 import pytest
@@ -66,7 +66,7 @@ def test_faiss_index_add_and_search() -> None:
 
     # Search
     query = np.array([[1.0, 0.0, 0.0, 0.0]], dtype=np.float32)
-    dists, res_ids, res_meta = index.search(query, k=2)
+    _dists, res_ids, res_meta = index.search(query, k=2)
 
     assert res_ids[0][0] == "a"
     assert res_meta[0][0] == {"val": 1}

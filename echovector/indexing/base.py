@@ -1,7 +1,7 @@
 """Base interfaces for the indexing module."""
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -16,7 +16,7 @@ class BaseStore(ABC):
 
     @abstractmethod
     def add(
-        self, int_ids: List[int], string_ids: List[str], metadata_list: List[Dict[str, Any]]
+        self, int_ids: list[int], string_ids: list[str], metadata_list: list[dict[str, Any]]
     ) -> None:
         """Add metadata and ID mappings to the store.
 
@@ -28,8 +28,8 @@ class BaseStore(ABC):
 
     @abstractmethod
     def get_by_int_ids(
-        self, int_ids: List[int]
-    ) -> Tuple[List[Optional[str]], List[Optional[Dict[str, Any]]]]:
+        self, int_ids: list[int]
+    ) -> tuple[list[str | None], list[dict[str, Any] | None]]:
         """Retrieve string IDs and metadata for a list of integer IDs.
 
         Args:
@@ -59,8 +59,8 @@ class BaseIndex(ABC):
     def add(
         self,
         embeddings: npt.NDArray[np.float32],
-        ids: List[str],
-        metadata: Optional[List[Dict[str, Any]]] = None,
+        ids: list[str],
+        metadata: list[dict[str, Any]] | None = None,
     ) -> None:
         """Add embeddings, IDs, and metadata to the index.
 
@@ -73,10 +73,10 @@ class BaseIndex(ABC):
     @abstractmethod
     def search(
         self, query_embeddings: npt.NDArray[np.float32], k: int = 10
-    ) -> Tuple[
+    ) -> tuple[
         npt.NDArray[np.float32],
-        List[List[Optional[str]]],
-        List[List[Optional[Dict[str, Any]]]],
+        list[list[str | None]],
+        list[list[dict[str, Any] | None]],
     ]:
         """Search for the k nearest neighbors for each query.
 

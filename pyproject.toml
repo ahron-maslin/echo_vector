@@ -3,7 +3,7 @@ requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
-name = "echovector"
+name = "echo_vector"
 dynamic = ["version"]
 description = "Semantic text search over audio files without full transcription"
 readme = "README.md"
@@ -13,7 +13,7 @@ authors = [
     { name = "EchoVector Contributors" },
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
@@ -33,8 +33,6 @@ dependencies = [
     "soundfile>=0.12,<1",
     "librosa>=0.10,<1",
     "faiss-cpu>=1.7,<2",
-    "transformers>=4.36,<5",
-    "torch>=2.1,<3",
     "typer[all]>=0.12,<1",
     "rich>=13.7,<14",
     "pydub>=0.25,<1",
@@ -42,6 +40,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+clap = [
+    "torch>=2.1,<3",
+    "transformers>=4.36,<5",
+]
 api = [
     "fastapi>=0.109,<1",
     "uvicorn[standard]>=0.27,<1",
@@ -51,6 +53,7 @@ dev = [
     "pytest-cov>=5.0,<6",
     "pytest-asyncio>=0.23,<1",
     "pytest-xdist>=3.5,<4",
+    "httpx>=0.27,<1",
     "hypothesis>=6.92,<7",
     "mutmut>=2.4,<3",
     "ruff>=0.3,<1",
@@ -63,17 +66,17 @@ docs = [
     "mkdocs-gen-files>=0.5,<1",
     "mkdocs-literate-nav>=0.6,<1",
 ]
-all = ["echovector[api,dev,docs]"]
+all = ["echo_vector[clap,api,dev,docs]"]
 
 [project.scripts]
 echovector = "echovector.cli.main:app"
 
 [project.urls]
-Homepage = "https://github.com/echovector/echovector"
-Documentation = "https://echovector.github.io/echovector"
-Repository = "https://github.com/echovector/echovector"
-Issues = "https://github.com/echovector/echovector/issues"
-Changelog = "https://github.com/echovector/echovector/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/ahron-maslin/echo_vector"
+Documentation = "https://github.com/ahron-maslin/echo_vector#readme"
+Repository = "https://github.com/ahron-maslin/echo_vector"
+Issues = "https://github.com/ahron-maslin/echo_vector/issues"
+Changelog = "https://github.com/ahron-maslin/echo_vector/blob/main/CHANGELOG.md"
 
 [tool.hatch.version]
 source = "vcs"
@@ -106,7 +109,7 @@ select = [
 ]
 ignore = [
     "D100", "D104", "D107",  # missing docstrings in some places
-    "ANN101", "ANN102",       # self/cls annotations
+    "ANN401",                 # Any is intentional in **kwargs and config helpers
     "S101",                   # assert usage (fine in tests)
 ]
 
@@ -114,7 +117,8 @@ ignore = [
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["D", "ANN", "S101", "ARG"]
+"tests/**/*.py" = ["D", "ANN", "S101", "ARG", "E501", "PT011"]
+"echovector/api/server.py" = ["B008"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -166,6 +170,8 @@ markers = [
 filterwarnings = [
     "error",
     "ignore::DeprecationWarning:pkg_resources",
+    "ignore::DeprecationWarning:numba",
+    "ignore::UserWarning:librosa",
 ]
 
 [tool.coverage.run]

@@ -1,35 +1,70 @@
-"""
-End-to-end tests for the EchoVector CLI.
-"""
+"""End-to-end tests for the EchoVector CLI."""
+
+from pathlib import Path
+
+import numpy as np
+import soundfile as sf
 from typer.testing import CliRunner
 
 from echovector.cli.main import app
 
 runner = CliRunner()
 
-def test_index_command() -> None:
-    """Test the index command."""
-    result = runner.invoke(app, ["index", "dummy_file.wav"])
-    assert result.exit_code == 0
-    assert "Starting indexing for 1 target(s)..." in result.stdout
-    assert "Indexing complete." in result.stdout
 
-def test_search_command() -> None:
-    """Test the search command."""
-    result = runner.invoke(app, ["search", "hello world", "--top-k", "2"])
-    assert result.exit_code == 0
-    assert "Searching for:" in result.stdout
-    assert "hello world" in result.stdout
-    assert "Top 2 Results" in result.stdout
+def _write_tone(path: Path, frequency: float = 440.0) -> None:
+    sample_rate = 16_000
+    duration = 0.25
+    t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
+    sf.write(path, 0.25 * np.sin(2 * np.pi * frequency * t), sample_rate)
 
-def test_stats_command() -> None:
-    """Test the stats command."""
-    result = runner.invoke(app, ["stats"])
-    assert result.exit_code == 0
-    assert "Index Statistics" in result.stdout
-    assert "Total Files Indexed" in result.stdout
-    assert "Total Audio Duration" in result.stdout
-    assert "Index Size" in result.stdout
+
+def test_index_search_and_stats_commands(tmp_path: Path) -> None:
+    """Test the CLI against a real local index."""
+    audio_path = tmp_path / "tone.wav"
+    store_dir = tmp_path / "index"
+    _write_tone(audio_path)
+
+    index_result = runner.invoke(
+        app,
+        [
+            "index",
+            str(audio_path),
+            "--store-dir",
+            str(store_dir),
+            "--backend",
+            "local",
+        ],
+    )
+    assert index_result.exit_code == 0
+    assert "Indexing complete." in index_result.stdout
+    assert "Indexed 1 chunk(s)." in index_result.stdout
+
+    search_result = runner.invoke(
+        app,
+        [
+            "search",
+            "high tone",
+            "--top-k",
+            "1",
+            "--store-dir",
+            str(store_dir),
+            "--backend",
+            "local",
+        ],
+    )
+    assert search_result.exit_code == 0
+    assert "Top 1 Results" in search_result.stdout
+    assert "tone.wav" in search_result.stdout
+
+    stats_result = runner.invoke(
+        app,
+        ["stats", "--store-dir", str(store_dir), "--backend", "local"],
+    )
+    assert stats_result.exit_code == 0
+    assert "Index Statistics" in stats_result.stdout
+    assert "vectors" in stats_result.stdout
+    assert "1" in stats_result.stdout
+
 
 def test_help_command() -> None:
     """Test the help command."""

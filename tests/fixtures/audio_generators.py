@@ -1,11 +1,12 @@
 """
 Synthetic audio generators for testing.
 """
+from pathlib import Path
+
 import numpy as np
 import numpy.typing as npt
 import soundfile as sf
-from pathlib import Path
-from typing import Union
+
 
 def generate_sine_wave(
     frequency: float = 440.0,
@@ -15,13 +16,13 @@ def generate_sine_wave(
 ) -> npt.NDArray[np.float32]:
     """
     Generate a synthetic sine wave audio signal.
-    
+
     Args:
         frequency: Frequency of the sine wave in Hz.
         duration: Duration of the signal in seconds.
         sample_rate: Sampling rate in Hz.
         amplitude: Amplitude of the signal (0.0 to 1.0).
-        
+
     Returns:
         1D numpy array containing the generated audio signal.
     """
@@ -30,13 +31,13 @@ def generate_sine_wave(
     return signal.astype(np.float32)
 
 def save_audio(
-    file_path: Union[str, Path],
+    file_path: str | Path,
     audio_data: npt.NDArray[np.float32],
     sample_rate: int = 16000
 ) -> None:
     """
     Save audio data to a file using soundfile.
-    
+
     Args:
         file_path: Path to save the audio file (e.g., .wav).
         audio_data: Numpy array containing audio data.

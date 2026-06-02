@@ -1,8 +1,5 @@
-"""
-HuBERT embedding backend stub.
-"""
+"""HuBERT embedding backend stub."""
 
-from typing import List, Any
 import numpy as np
 import numpy.typing as npt
 
@@ -10,11 +7,9 @@ from echovector.embeddings.base import EmbeddingBackend
 
 
 class HubertBackend(EmbeddingBackend):
-    """
-    Stub implementation for the HuBERT embedding backend.
-    """
+    """Stub implementation for the HuBERT embedding backend."""
 
-    def __init__(self, model_name: str = "facebook/hubert-base-ls960", **kwargs: Any) -> None:
+    def __init__(self, model_name: str = "facebook/hubert-base-ls960") -> None:
         """Initialize the stub HuBERT backend."""
         self.model_name = model_name
 
@@ -23,9 +18,8 @@ class HubertBackend(EmbeddingBackend):
         """Return a stub embedding dimension."""
         return 768
 
-    def embed_audio(self, audio_paths: List[str]) -> npt.NDArray[np.float32]:
-        """
-        Embed a batch of audio files.
+    def embed_audio(self, audio_paths: list[str]) -> npt.NDArray[np.float32]:
+        """Embed a batch of audio files.
 
         Args:
             audio_paths: List of file paths to audio files.
@@ -35,9 +29,8 @@ class HubertBackend(EmbeddingBackend):
         """
         raise NotImplementedError("HuBERT audio embedding not implemented.")
 
-    def embed_text(self, texts: List[str]) -> npt.NDArray[np.float32]:
-        """
-        Embed a batch of text queries.
+    def embed_text(self, texts: list[str]) -> npt.NDArray[np.float32]:
+        """Embed a batch of text queries.
 
         Args:
             texts: List of text strings.

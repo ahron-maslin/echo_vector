@@ -1,106 +1,145 @@
-"""
-API server module for EchoVector using FastAPI.
-"""
-from typing import Any, Dict, List, Optional
+"""FastAPI server for EchoVector."""
 
-from fastapi import FastAPI, status
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from fastapi import Depends, FastAPI
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from echovector.core import EchoVector
 
 app = FastAPI(
     title="EchoVector API",
-    description="API for indexing and searching audio files.",
+    description="Semantic search over audio files.",
     version="0.1.0",
 )
 
+# Default engine instance — override via app.dependency_overrides in tests.
+_default_engine: EchoVector | None = None
+
+
+def get_engine() -> EchoVector:
+    """Return the active EchoVector engine."""
+    if _default_engine is None:
+        raise RuntimeError(
+            "No EchoVector engine configured. "
+            "Call configure_engine() before starting the server."
+        )
+    return _default_engine
+
+
+def configure_engine(engine: EchoVector) -> None:
+    """Set the engine used by the server at startup."""
+    global _default_engine
+    _default_engine = engine
+
+
+# ---------------------------------------------------------------------------
+# Request / response models
+# ---------------------------------------------------------------------------
+
+
 class IndexRequest(BaseModel):
-    """Request model for indexing an audio file."""
-    file_path: str = Field(..., description="Path to the audio file to index")
-    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    """Paths to index."""
+
+    paths: list[str] = Field(..., description="Audio file or directory paths to index.")
+    force: bool = Field(False, description="Re-index files that are already stored.")
+
 
 class IndexResponse(BaseModel):
-    """Response model for indexing operations."""
-    status: str
-    file_path: str
-    message: str
+    """Result of an index operation."""
+
+    chunks_added: int
+    files_skipped: int
+
 
 class SearchRequest(BaseModel):
-    """Request model for searching audio files."""
-    query: str = Field(..., description="Text query to search for in audio files")
-    top_k: int = Field(10, description="Number of results to return")
+    """Text query for audio search."""
 
-class SearchResult(BaseModel):
-    """Individual search result model."""
-    file_path: str
+    query: str = Field(..., description="Natural language query.")
+    top_k: int = Field(5, ge=1, description="Maximum results to return.")
+
+
+class SearchResultItem(BaseModel):
+    """Single search result."""
+
+    filepath: str
+    start: float
+    end: float
     score: float
-    timestamp: float
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
 
 class SearchResponse(BaseModel):
-    """Response model for search operations."""
-    results: List[SearchResult]
-    total: int
-    query_time_ms: float
+    """Search results."""
+
+    results: list[SearchResultItem]
+
 
 class StatsResponse(BaseModel):
-    """Response model for index statistics."""
-    total_files: int
-    total_duration_seconds: float
-    index_size_bytes: int
+    """Index statistics."""
 
-# In-memory mock database for the server
-_db: Dict[str, Any] = {}
+    chunks: int
+    embedding_dim: int
+    store_dir: str
 
-@app.post("/index", response_model=IndexResponse, status_code=status.HTTP_201_CREATED)
-async def index_audio(request: IndexRequest) -> IndexResponse:
-    """
-    Index a new audio file for semantic search.
-    """
-    _db[request.file_path] = {
-        "metadata": request.metadata,
-        "duration": 120.0  # Mock duration
-    }
-    return IndexResponse(
-        status="success",
-        file_path=request.file_path,
-        message="Audio file indexed successfully"
-    )
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.post("/index", response_model=IndexResponse)
+def index_audio(
+    request: IndexRequest,
+    engine: EchoVector = Depends(get_engine),
+) -> IndexResponse:
+    """Index audio files or directories."""
+    before = engine.stats()["chunks"]
+    chunks_added = engine.index(request.paths, force=request.force)
+    after = engine.stats()["chunks"]
+    files_skipped = len(request.paths) - (after - before > 0 or chunks_added > 0)
+    # Simpler: derive skipped count from chunks_added being 0 per file
+    files_skipped = max(0, len(request.paths) - (1 if chunks_added > 0 else 0))
+    return IndexResponse(chunks_added=chunks_added, files_skipped=files_skipped)
+
 
 @app.post("/search", response_model=SearchResponse)
-async def search_audio(request: SearchRequest) -> SearchResponse:
-    """
-    Search for text query within indexed audio files.
-    """
-    results = []
-    # Mock search logic returning predefined results based on the index contents
-    for file_path, data in _db.items():
-        results.append(
-            SearchResult(
-                file_path=file_path,
-                score=0.95,
-                timestamp=12.5,
-                metadata=data.get("metadata", {})
-            )
-        )
-    
-    # Sort and truncate
-    results.sort(key=lambda x: x.score, reverse=True)
-    results = results[:request.top_k]
-    
+def search_audio(
+    request: SearchRequest,
+    engine: EchoVector = Depends(get_engine),
+) -> SearchResponse:
+    """Search indexed audio with a text query."""
+    results = engine.search(request.query, top_k=request.top_k)
     return SearchResponse(
-        results=results,
-        total=len(results),
-        query_time_ms=45.6
+        results=[
+            SearchResultItem(
+                filepath=r.filepath,
+                start=r.timestamp_range.start,
+                end=r.timestamp_range.end,
+                score=r.score,
+                metadata=r.metadata or {},
+            )
+            for r in results
+        ]
     )
 
+
 @app.get("/stats", response_model=StatsResponse)
-async def get_stats() -> StatsResponse:
-    """
-    Get index statistics.
-    """
-    total_files = len(_db)
-    total_duration = sum(d.get("duration", 0.0) for d in _db.values())
+def get_stats(engine: EchoVector = Depends(get_engine)) -> StatsResponse:
+    """Return index statistics."""
+    s = engine.stats()
     return StatsResponse(
-        total_files=total_files,
-        total_duration_seconds=total_duration,
-        index_size_bytes=total_files * 1024  # Mock size
+        chunks=int(s["chunks"]),
+        embedding_dim=int(s["embedding_dim"]),
+        store_dir=str(s["store_dir"]),
     )
+
+
+@app.post("/reset")
+def reset_index(engine: EchoVector = Depends(get_engine)) -> dict[str, str]:
+    """Clear the index."""
+    engine.reset()
+    return {"status": "ok"}

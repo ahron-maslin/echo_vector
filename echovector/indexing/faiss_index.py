@@ -1,7 +1,7 @@
 """Faiss-based index implementation."""
 
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, cast
 
 import faiss
 import numpy as np
@@ -22,14 +22,14 @@ class FaissIndex(BaseIndex):
             db_path: Path to the SQLite store database.
         """
         self.dimension = dimension
-        self.index = faiss.IndexFlatIP(dimension)
+        self.index: faiss.IndexIDMap2 = faiss.IndexIDMap2(faiss.IndexFlatIP(dimension))
         self.store = SQLiteStore(db_path)
 
     def add(
         self,
         embeddings: npt.NDArray[np.float32],
-        ids: List[str],
-        metadata: Optional[List[Dict[str, Any]]] = None,
+        ids: list[str],
+        metadata: list[dict[str, Any]] | None = None,
     ) -> None:
         """Add embeddings, their string IDs, and metadata to the index.
 
@@ -58,21 +58,22 @@ class FaissIndex(BaseIndex):
         # Ensure embeddings are contiguous and float32
         embeddings_f32 = np.ascontiguousarray(embeddings, dtype=np.float32)
 
-        start_id = self.index.ntotal
+        # Use max stored ID + 1 so IDs remain unique after deletions.
+        start_id = self.store.get_max_int_id() + 1
         int_ids = list(range(start_id, start_id + num_vectors))
 
-        # Add to Faiss index
-        self.index.add(embeddings_f32)
+        # Add to Faiss index with explicit IDs
+        self.index.add_with_ids(embeddings_f32, np.array(int_ids, dtype=np.int64))
 
         # Add to SQLite store
         self.store.add(int_ids, ids, metadata)
 
     def search(
         self, query_embeddings: npt.NDArray[np.float32], k: int = 10
-    ) -> Tuple[
+    ) -> tuple[
         npt.NDArray[np.float32],
-        List[List[Optional[str]]],
-        List[List[Optional[Dict[str, Any]]]],
+        list[list[str | None]],
+        list[list[dict[str, Any] | None]],
     ]:
         """Search for the k nearest neighbors.
 
@@ -87,7 +88,9 @@ class FaissIndex(BaseIndex):
             ValueError: If query embeddings dimensions are invalid.
         """
         if query_embeddings.ndim != 2 or query_embeddings.shape[1] != self.dimension:
-            raise ValueError(f"Query embeddings must be a 2D array with dimension {self.dimension}")
+            raise ValueError(
+                f"Query embeddings must be a 2D array with dimension {self.dimension}"
+            )
 
         if self.index.ntotal == 0:
             return (
@@ -102,8 +105,8 @@ class FaissIndex(BaseIndex):
 
         distances, int_indices = self.index.search(query_f32, actual_k)
 
-        all_string_ids: List[List[Optional[str]]] = []
-        all_metadata: List[List[Optional[Dict[str, Any]]]] = []
+        all_string_ids: list[list[str | None]] = []
+        all_metadata: list[list[dict[str, Any] | None]] = []
 
         for indices in int_indices:
             # -1 is returned by Faiss if not enough results are found
@@ -116,8 +119,8 @@ class FaissIndex(BaseIndex):
             str_ids, meta = self.store.get_by_int_ids(valid_indices)
 
             # Reconstruct list to handle -1
-            row_str_ids: List[Optional[str]] = []
-            row_meta: List[Optional[Dict[str, Any]]] = []
+            row_str_ids: list[str | None] = []
+            row_meta: list[dict[str, Any] | None] = []
             valid_idx_ptr = 0
             for idx in indices:
                 if idx == -1:
@@ -133,12 +136,30 @@ class FaissIndex(BaseIndex):
 
         return distances, all_string_ids, all_metadata
 
+    def remove_int_ids(self, int_ids: list[int]) -> None:
+        """Remove vectors by their integer IDs from the FAISS index and metadata store.
+
+        Args:
+            int_ids: List of integer IDs to remove.
+        """
+        if not int_ids:
+            return
+        ids_array = np.array(int_ids, dtype=np.int64)
+        self.index.remove_ids(faiss.IDSelectorBatch(ids_array))
+        placeholders = ",".join("?" for _ in int_ids)
+        delete_query = f"DELETE FROM metadata WHERE int_id IN ({placeholders})"  # noqa: S608
+        self.store._conn.execute(delete_query, int_ids)
+        self.store._conn.commit()
+
     def save(self, index_path: str) -> None:
         """Save the Faiss index to disk.
 
         Args:
             index_path: The file path to save the index to.
         """
+        parent = os.path.dirname(index_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
         faiss.write_index(self.index, index_path)
 
     def load(self, index_path: str) -> None:
@@ -153,7 +174,7 @@ class FaissIndex(BaseIndex):
         """
         if not os.path.exists(index_path):
             raise FileNotFoundError(f"Index file {index_path} not found.")
-        self.index = faiss.read_index(index_path)
+        self.index = cast("faiss.IndexIDMap2", faiss.read_index(index_path))
         if self.index.d != self.dimension:
             raise ValueError(
                 f"Loaded index dimension ({self.index.d}) does not match "

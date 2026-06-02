@@ -1,12 +1,12 @@
-from .processor import AudioProcessor
 from .chunker import SilenceAwareChunker
 from .metadata import AudioMetadata, extract_metadata
+from .processor import AudioProcessor
 from .streaming import AudioStreamer
 
 __all__ = [
-    "AudioProcessor",
-    "SilenceAwareChunker",
     "AudioMetadata",
-    "extract_metadata",
-    "AudioStreamer"
+    "AudioProcessor",
+    "AudioStreamer",
+    "SilenceAwareChunker",
+    "extract_metadata"
 ]

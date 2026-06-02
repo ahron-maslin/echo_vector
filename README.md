@@ -34,6 +34,7 @@ Text Query → Text Embedding ──────────────┘
 - 🔍 **Semantic search** — Query with natural language
 - ⚡ **FAISS-powered** — Approximate nearest neighbor search
 - 🔌 **Pluggable backends** — CLAP, Whisper, wav2vec2, HuBERT, AST
+- 🧪 **Offline smoke backend** — `local` backend for CI/Kaggle tests without model downloads
 - 📊 **Rich CLI** — Progress bars, colors, benchmarking mode
 - 🌐 **REST API** — Optional FastAPI server
 - 📦 **Production-ready** — Typed, tested, documented
@@ -55,10 +56,10 @@ uv add echovector
 ### CLI Usage
 
 ```bash
-# Index a directory of audio files
+# One-time indexing: split audio into timestamped chunks and embed each chunk
 echovector index ./meetings
 
-# Search across indexed audio
+# Fast repeated search: embed only the text query and search the saved FAISS index
 echovector search "discussion about transformers"
 
 # Search with options
@@ -67,6 +68,18 @@ echovector search "pricing strategy" --top-k 10
 # View index statistics
 echovector stats
 ```
+
+For a no-download smoke test, use the deterministic local backend:
+
+```bash
+echovector index ./meetings --backend local --store-dir ./ev-index
+echovector search "high alarm tone" --backend local --store-dir ./ev-index
+echovector stats --backend local --store-dir ./ev-index
+```
+
+The search command does not reopen or scan the audio files. All expensive audio processing happens
+during `index`; `search` loads the saved vector index, embeds the short text query, and returns the
+nearest timestamped chunks.
 
 ### Python API
 
@@ -82,8 +95,76 @@ ev.index("./meetings")
 results = ev.search("conversation about CUDA kernels")
 
 for r in results:
-    print(f"{r.file} [{r.start:.1f}s - {r.end:.1f}s] score={r.score:.4f}")
+    print(
+        f"{r.filepath} "
+        f"[{r.timestamp_range.start:.1f}s - {r.timestamp_range.end:.1f}s] "
+        f"score={r.score:.4f}"
+    )
 ```
+
+## Testing on Kaggle
+
+Kaggle is useful for GPU-backed CLAP tests, but first check the runtime Python version:
+
+```python
+import sys
+print(sys.version)
+```
+
+EchoVector currently declares `Python >=3.12`. If the Kaggle image is older, install and test in a
+Python 3.12-capable environment instead, or relax the project requirement only after validating the
+test suite on that Python version.
+
+### Notebook smoke test without internet/model downloads
+
+Upload this repository as a Kaggle dataset, attach it to a notebook, then run:
+
+```python
+%cd /kaggle/input/<your-echo-vector-dataset>
+!pip install -e . --no-deps
+!pip install numpy soundfile librosa faiss-cpu typer rich pydantic
+!python -m pytest tests/ -q
+```
+
+Create a tiny audio corpus and test the real CLI/index path:
+
+```python
+import os
+import numpy as np
+import soundfile as sf
+
+audio_dir = "/kaggle/working/ev-audio"
+index_dir = "/kaggle/working/ev-index"
+os.makedirs(audio_dir, exist_ok=True)
+
+sr = 16000
+t = np.linspace(0, 1.0, sr, endpoint=False)
+sf.write(f"{audio_dir}/high_tone.wav", 0.25 * np.sin(2 * np.pi * 880 * t), sr)
+sf.write(f"{audio_dir}/low_tone.wav", 0.25 * np.sin(2 * np.pi * 110 * t), sr)
+```
+
+```python
+!echovector index /kaggle/working/ev-audio --backend local --store-dir /kaggle/working/ev-index --reset
+!echovector search "high alarm tone" --backend local --store-dir /kaggle/working/ev-index --top-k 2
+!echovector stats --backend local --store-dir /kaggle/working/ev-index
+```
+
+This validates packaging, audio loading, FAISS persistence, metadata storage, and the CLI without
+depending on Hugging Face downloads.
+
+### CLAP semantic test
+
+For actual semantic text-to-audio search, enable internet in the notebook settings and use a GPU
+runtime if available:
+
+```python
+!pip install transformers torch faiss-cpu librosa soundfile
+!echovector index /kaggle/input/<audio-dataset> --backend clap --device cuda --store-dir /kaggle/working/clap-index --recursive --reset
+!echovector search "people discussing pricing strategy" --backend clap --device cuda --store-dir /kaggle/working/clap-index --top-k 10
+```
+
+If GPU is unavailable, replace `--device cuda` with `--device cpu`; it will be slower. Keep indexes
+under `/kaggle/working` so they are writable during the notebook session.
 
 ## Architecture
 

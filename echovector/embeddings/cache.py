@@ -1,23 +1,21 @@
-"""
-Content-addressed caching for audio embeddings.
-"""
+"""Content-addressed caching for audio embeddings."""
 
 import hashlib
 from pathlib import Path
-from typing import Optional, Union
+from typing import cast
+
 import numpy as np
 import numpy.typing as npt
 
 
 class EmbeddingCache:
-    """
-    Content-addressed storage for embeddings.
+    """Content-addressed storage for embeddings.
+
     Embeddings are cached based on the hash of the file content or text.
     """
 
-    def __init__(self, cache_dir: Union[str, Path] = ".cache/echovector") -> None:
-        """
-        Initialize the embedding cache.
+    def __init__(self, cache_dir: str | Path = ".cache/echovector") -> None:
+        """Initialize the embedding cache.
 
         Args:
             cache_dir: Directory to store the cache files.
@@ -43,9 +41,8 @@ class EmbeddingCache:
         """Get the file path for a cached embedding."""
         return self.cache_dir / f"{hash_key}.npy"
 
-    def get_audio_embedding(self, filepath: str) -> Optional[npt.NDArray[np.float32]]:
-        """
-        Retrieve cached embedding for an audio file.
+    def get_audio_embedding(self, filepath: str) -> npt.NDArray[np.float32] | None:
+        """Retrieve cached embedding for an audio file.
 
         Args:
             filepath: Path to the audio file.
@@ -55,16 +52,15 @@ class EmbeddingCache:
         """
         hash_key = self._compute_file_hash(filepath)
         cache_path = self._get_cache_path(hash_key)
-        
+
         if cache_path.exists():
-            return np.load(cache_path)
+            return cast("npt.NDArray[np.float32]", np.load(cache_path))
         return None
 
     def put_audio_embedding(
         self, filepath: str, embedding: npt.NDArray[np.float32]
     ) -> None:
-        """
-        Store embedding for an audio file in cache.
+        """Store embedding for an audio file in cache.
 
         Args:
             filepath: Path to the audio file.
@@ -74,9 +70,8 @@ class EmbeddingCache:
         cache_path = self._get_cache_path(hash_key)
         np.save(cache_path, embedding)
 
-    def get_text_embedding(self, text: str) -> Optional[npt.NDArray[np.float32]]:
-        """
-        Retrieve cached embedding for a text string.
+    def get_text_embedding(self, text: str) -> npt.NDArray[np.float32] | None:
+        """Retrieve cached embedding for a text string.
 
         Args:
             text: The text string.
@@ -86,14 +81,13 @@ class EmbeddingCache:
         """
         hash_key = self._compute_text_hash(text)
         cache_path = self._get_cache_path(hash_key)
-        
+
         if cache_path.exists():
-            return np.load(cache_path)
+            return cast("npt.NDArray[np.float32]", np.load(cache_path))
         return None
 
     def put_text_embedding(self, text: str, embedding: npt.NDArray[np.float32]) -> None:
-        """
-        Store embedding for a text string in cache.
+        """Store embedding for a text string in cache.
 
         Args:
             text: The text string.

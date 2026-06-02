@@ -1,7 +1,8 @@
-from typing import Generator
-import soundfile as sf
+from collections.abc import Generator
+
 import numpy as np
 import numpy.typing as npt
+import soundfile as sf
 
 
 class AudioStreamer:
@@ -24,7 +25,9 @@ class AudioStreamer:
         Yields:
             Blocks of audio data as numpy arrays.
         """
-        for block in sf.blocks(file_path, blocksize=self.block_size, dtype='float32', always_2d=False):
+        for block in sf.blocks(
+            file_path, blocksize=self.block_size, dtype="float32", always_2d=False
+        ):
             if block.ndim > 1:
                 block = np.mean(block, axis=1, dtype=np.float32)
             yield block
