@@ -176,6 +176,7 @@ filterwarnings = [
     "ignore::DeprecationWarning:pkg_resources",
     "ignore::DeprecationWarning:numba",
     "ignore::UserWarning:librosa",
+    "ignore::starlette.exceptions.StarletteDeprecationWarning",
 ]
 
 [tool.coverage.run]
