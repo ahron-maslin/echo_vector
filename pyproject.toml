@@ -177,6 +177,7 @@ filterwarnings = [
     "ignore::DeprecationWarning:numba",
     "ignore::UserWarning:librosa",
     "ignore:.*httpx.*:DeprecationWarning:starlette.*",
+    "ignore:.*app.*shortcut.*:DeprecationWarning:httpx.*",
 ]
 
 [tool.coverage.run]

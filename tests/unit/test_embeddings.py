@@ -11,10 +11,11 @@ import numpy as np
 import pytest
 
 from echovector.embeddings.cache import EmbeddingCache
-from echovector.embeddings.clap import ClapBackend
+from echovector.embeddings.clap import _CLAP_AVAILABLE, ClapBackend
 from echovector.embeddings.factory import get_embedding_model
 
 
+@pytest.mark.skipif(not _CLAP_AVAILABLE, reason="torch/transformers not installed")
 class TestClapBackend(unittest.TestCase):
     @patch("echovector.embeddings.clap.ClapModel")
     @patch("echovector.embeddings.clap.ClapProcessor")

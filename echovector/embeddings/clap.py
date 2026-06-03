@@ -5,8 +5,6 @@ from typing import cast
 import librosa
 import numpy as np
 import numpy.typing as npt
-import torch
-from transformers import ClapModel, ClapProcessor
 
 from echovector.embeddings.base import EmbeddingBackend
 
