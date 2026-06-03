@@ -1,5 +1,6 @@
 """SQLite-based store for metadata persistence."""
 
+import contextlib
 import json
 import sqlite3
 from typing import Any
@@ -157,3 +158,8 @@ class SQLiteStore(BaseStore):
     def close(self) -> None:
         """Close the database connection."""
         self._conn.close()
+
+    def __del__(self) -> None:
+        """Ensure connection is closed on GC to avoid Python 3.13 sqlite3 finalizer bug."""
+        with contextlib.suppress(Exception):
+            self._conn.close()
