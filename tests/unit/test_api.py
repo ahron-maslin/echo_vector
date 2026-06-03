@@ -5,7 +5,7 @@ import pytest
 import soundfile as sf
 
 fastapi = pytest.importorskip("fastapi")
-httpx = pytest.importorskip("httpx")
+pytest.importorskip("httpx2")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
