@@ -44,13 +44,13 @@ Text Query → Text Embedding ──────────────┘
 ### Installation
 
 ```bash
-pip install echovector
+pip install echo_vector
 ```
 
 Or with uv:
 
 ```bash
-uv add echovector
+uv add echo_vector
 ```
 
 ### CLI Usage
