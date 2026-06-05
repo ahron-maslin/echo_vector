@@ -1,20 +1,16 @@
 """CLAP (Contrastive Language-Audio Pretraining) embedding backend."""
 
-from typing import cast
+from typing import Any, cast
 
 import librosa
 import numpy as np
 import numpy.typing as npt
+import torch
+from transformers import ClapModel, ClapProcessor
 
 from echovector.embeddings.base import EmbeddingBackend
 
-try:
-    import torch
-    from transformers import ClapModel, ClapProcessor
-
-    _CLAP_AVAILABLE = True
-except ImportError:  # pragma: no cover
-    _CLAP_AVAILABLE = False
+_CLAP_AVAILABLE = True
 
 
 class ClapBackend(EmbeddingBackend):
@@ -33,22 +29,14 @@ class ClapBackend(EmbeddingBackend):
         Args:
             model_name: The Hugging Face model identifier.
             device: Device to run the model on (e.g., 'cpu', 'cuda').
-
-        Raises:
-            ImportError: If torch or transformers are not installed.
         """
-        if not _CLAP_AVAILABLE:
-            raise ImportError(
-                "CLAP backend requires torch and transformers. "
-                "Install them with: pip install echo_vector"
-            )
         if device is None:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
         else:
             self.device = device
 
-        self.processor = ClapProcessor.from_pretrained(model_name)
-        self.model = ClapModel.from_pretrained(model_name)
+        self.processor: Any = ClapProcessor.from_pretrained(model_name)  # pyright: ignore[reportArgumentType]
+        self.model: Any = ClapModel.from_pretrained(model_name)  # pyright: ignore[reportArgumentType]
         self.model.to(self.device)
         self.model.eval()
 
@@ -81,7 +69,7 @@ class ClapBackend(EmbeddingBackend):
 
         audios = [self._load_and_resample(path, target_sr) for path in audio_paths]
 
-        inputs = self.processor(
+        inputs = cast("Any", self.processor)(
             audios=audios,
             return_tensors="pt",
             sampling_rate=target_sr,
@@ -107,7 +95,7 @@ class ClapBackend(EmbeddingBackend):
         Returns:
             A numpy array of shape (batch_size, embedding_dim).
         """
-        inputs = self.processor(
+        inputs = cast("Any", self.processor)(
             text=texts,
             return_tensors="pt",
             padding=True,
