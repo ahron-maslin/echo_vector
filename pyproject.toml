@@ -37,13 +37,11 @@ dependencies = [
     "rich>=13.7,<14",
     "pydub>=0.25,<1",
     "tqdm>=4.66,<5",
-]
-
-[project.optional-dependencies]
-clap = [
     "torch>=2.1,<3",
     "transformers>=4.36,<5",
 ]
+
+[project.optional-dependencies]
 api = [
     "fastapi>=0.109,<1",
     "uvicorn[standard]>=0.27,<1",
@@ -66,7 +64,7 @@ docs = [
     "mkdocs-gen-files>=0.5,<1",
     "mkdocs-literate-nav>=0.6,<1",
 ]
-all = ["echo_vector[clap,api,dev,docs]"]
+all = ["echo_vector[api,dev,docs]"]
 
 [project.scripts]
 echovector = "echovector.cli.main:app"

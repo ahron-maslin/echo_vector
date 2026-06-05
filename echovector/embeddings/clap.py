@@ -40,7 +40,7 @@ class ClapBackend(EmbeddingBackend):
         if not _CLAP_AVAILABLE:
             raise ImportError(
                 "CLAP backend requires torch and transformers. "
-                "Install them with: pip install 'echo_vector[clap]'"
+                "Install them with: pip install echo_vector"
             )
         if device is None:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
