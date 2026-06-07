@@ -5,6 +5,7 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.progress import Progress
 from rich.table import Table
 
 from echovector import EchoVector
@@ -74,7 +75,16 @@ def index(
             )
         if reset:
             engine.reset()
-        count = engine.index(files, recursive=recursive)
+
+        with Progress(console=console) as progress:
+            task = progress.add_task("Indexing files...", total=None)
+
+            def _on_file_indexed(done: int, total: int, file_path: Path) -> None:
+                progress.update(
+                    task, total=total, completed=done, description=f"Indexed {file_path.name}"
+                )
+
+            count = engine.index(files, recursive=recursive, on_file_indexed=_on_file_indexed)
     except Exception as exc:
         console.print(f"[bold red]Indexing failed:[/bold red] {exc}")
         raise typer.Exit(code=1) from exc

@@ -1,6 +1,6 @@
 """Core public API for EchoVector."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, cast
@@ -67,6 +67,7 @@ class EchoVector:
         recursive: bool | None = None,
         batch_size: int = 16,
         force: bool = False,
+        on_file_indexed: Callable[[int, int, Path], None] | None = None,
     ) -> int:
         """Index audio chunks from paths or directories.
 
@@ -76,6 +77,9 @@ class EchoVector:
             batch_size: Number of chunks to embed per batch.
             force: If True, remove and re-index files that are already stored.
                    If False (default), already-indexed files are skipped.
+            on_file_indexed: Optional callback invoked after each file is
+                processed, with (files_done, total_files, file_path). Useful
+                for reporting progress.
 
         Returns:
             Number of new chunks added to the index.
@@ -103,7 +107,7 @@ class EchoVector:
             chunk_ids: list[str] = []
             chunk_metadata: list[dict[str, Any]] = []
 
-            for file_path in files:
+            for file_number, file_path in enumerate(files, start=1):
                 audio = self.audio_processor.load_audio(str(file_path))
                 for (
                     chunk_number,
@@ -130,6 +134,9 @@ class EchoVector:
                         chunk_paths = []
                         chunk_ids = []
                         chunk_metadata = []
+
+                if on_file_indexed is not None:
+                    on_file_indexed(file_number, len(files), file_path)
 
             if chunk_paths:
                 self._add_chunk_batch(chunk_paths, chunk_ids, chunk_metadata)
