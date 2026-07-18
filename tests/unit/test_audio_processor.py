@@ -57,6 +57,31 @@ def test_extract_metadata_not_found() -> None:
         extract_metadata("nonexistent_file.wav")
 
 
+@patch("echovector.audio.processor.librosa")
+@patch("echovector.audio.processor.sf")
+def test_audio_processor_load_librosa_fallback_stereo_to_mono(
+    mock_sf: patch, mock_librosa: patch, temp_audio_file: str
+) -> None:
+    """Stereo audio loaded via the librosa fallback should downmix correctly.
+
+    librosa.load(mono=False) returns (channels, samples), unlike soundfile's
+    (samples, channels); the downmix must average across channels, not time.
+    """
+    mock_sf.LibsndfileError = sf.LibsndfileError
+    mock_sf.read.side_effect = sf.LibsndfileError("unsupported format")
+
+    left = np.full(1000, 1.0, dtype=np.float32)
+    right = np.full(1000, 3.0, dtype=np.float32)
+    mock_librosa.load.return_value = (np.stack([left, right]), 16000)
+
+    processor = AudioProcessor(target_sample_rate=16000, mono=True)
+    audio = processor.load_audio(temp_audio_file)
+
+    assert audio.ndim == 1
+    assert audio.shape[0] == 1000
+    assert np.allclose(audio, 2.0)
+
+
 @patch("echovector.audio.metadata.sf.info")
 @patch("echovector.audio.metadata.librosa")
 def test_extract_metadata_fallback(

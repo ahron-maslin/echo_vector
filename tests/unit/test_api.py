@@ -5,7 +5,7 @@ import pytest
 import soundfile as sf
 
 fastapi = pytest.importorskip("fastapi")
-pytest.importorskip("httpx2")
+pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -56,6 +56,22 @@ def test_index_skips_duplicate(client, tmp_path):
     assert resp.status_code == 200
     assert resp.json()["chunks_added"] == 0
     assert resp.json()["files_skipped"] == 1
+
+
+def test_index_skipped_count_with_mixed_paths(client, tmp_path):
+    """files_skipped must reflect per-file status, not just whether any chunk was added."""
+    already_indexed = tmp_path / "old.wav"
+    _write_tone(already_indexed, frequency=220.0)
+    client.post("/index", json={"paths": [str(already_indexed)]})
+
+    new_file = tmp_path / "new.wav"
+    _write_tone(new_file, frequency=660.0)
+
+    resp = client.post("/index", json={"paths": [str(already_indexed), str(new_file)]})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["chunks_added"] == 1
+    assert body["files_skipped"] == 1
 
 
 def test_search_endpoint(client, tmp_path):

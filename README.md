@@ -2,7 +2,7 @@
 
 > **Semantic text search over audio files — without full transcription.**
 
-[![CI](https://github.com/echovector/echovector/actions/workflows/test.yml/badge.svg)](https://github.com/echovector/echovector/actions/workflows/test.yml)
+[![CI](https://github.com/ahron-maslin/echo_vector/actions/workflows/workflow.yml/badge.svg)](https://github.com/ahron-maslin/echo_vector/actions/workflows/workflow.yml)
 [![Coverage](https://img.shields.io/badge/coverage-%3E95%25-brightgreen)](.)
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue)](.)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -33,7 +33,7 @@ Text Query → Text Embedding ──────────────┘
 - 🧠 **Direct audio embeddings** — No transcription needed
 - 🔍 **Semantic search** — Query with natural language
 - ⚡ **FAISS-powered** — Approximate nearest neighbor search
-- 🔌 **Pluggable backends** — CLAP, Whisper, wav2vec2, HuBERT, AST
+- 🔌 **Pluggable backends** — CLAP implemented today; Whisper, wav2vec2, HuBERT, AST are stubbed for future work
 - 🧪 **Offline smoke backend** — `local` backend for CI/Kaggle tests without model downloads
 - 📊 **Rich CLI** — Progress bars, colors, benchmarking mode
 - 🌐 **REST API** — Optional FastAPI server
@@ -183,19 +183,20 @@ echovector/
 
 ## Supported Embedding Backends
 
-| Backend | Text+Audio Aligned | Notes |
-|---------|-------------------|-------|
-| **CLAP** (default) | ✅ | Best for text→audio search |
-| Whisper Encoder | ❌ | Audio-only embeddings |
-| wav2vec2 | ❌ | Audio-only, good for speech |
-| HuBERT | ❌ | Audio-only, self-supervised |
-| Audio Spectrogram Transformer | ❌ | Audio-only, classification-focused |
+| Backend | Status | Notes |
+|---------|--------|-------|
+| **CLAP** (default) | ✅ Implemented | Text+audio aligned; best for text→audio search |
+| `local` | ✅ Implemented | Deterministic acoustic-feature backend for offline smoke tests |
+| Whisper Encoder | 🚧 Stub | Raises `NotImplementedError`; not yet implemented |
+| wav2vec2 | 🚧 Stub | Raises `NotImplementedError`; not yet implemented |
+| HuBERT | 🚧 Stub | Raises `NotImplementedError`; not yet implemented |
+| Audio Spectrogram Transformer | 🚧 Stub | Raises `NotImplementedError`; not yet implemented |
 
 ## Development
 
 ```bash
 # Clone and install
-git clone https://github.com/echovector/echovector.git
+git clone https://github.com/ahron-maslin/echo_vector.git
 cd echovector
 uv sync --all-extras
 

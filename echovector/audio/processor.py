@@ -38,6 +38,9 @@ class AudioProcessor:
             audio, sample_rate = sf.read(file_path, dtype="float32", always_2d=False)
         except sf.LibsndfileError:
             audio, sample_rate = librosa.load(file_path, sr=None, mono=False)
+            if audio.ndim > 1:
+                # librosa returns (channels, samples); soundfile returns (samples, channels).
+                audio = audio.T
 
         if self.mono and audio.ndim > 1:
             audio = np.mean(audio, axis=1)

@@ -96,12 +96,9 @@ def index_audio(
     engine: EchoVector = Depends(get_engine),
 ) -> IndexResponse:
     """Index audio files or directories."""
-    before = engine.stats()["chunks"]
+    resolved_files = engine.resolve_audio_files(request.paths)
+    files_skipped = 0 if request.force else sum(1 for f in resolved_files if engine.is_indexed(f))
     chunks_added = engine.index(request.paths, force=request.force)
-    after = engine.stats()["chunks"]
-    files_skipped = len(request.paths) - (after - before > 0 or chunks_added > 0)
-    # Simpler: derive skipped count from chunks_added being 0 per file
-    files_skipped = max(0, len(request.paths) - (1 if chunks_added > 0 else 0))
     return IndexResponse(chunks_added=chunks_added, files_skipped=files_skipped)
 
 

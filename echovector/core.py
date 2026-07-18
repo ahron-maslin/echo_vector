@@ -199,6 +199,28 @@ class EchoVector:
             db_path=str(self.db_path),
         )
 
+    def resolve_audio_files(
+        self,
+        targets: str | Path | Sequence[str | Path],
+        recursive: bool | None = None,
+    ) -> list[Path]:
+        """Resolve targets (files and/or directories) to a sorted list of audio files.
+
+        Args:
+            targets: One or more file paths or directories.
+            recursive: Override the instance-level recursive setting.
+
+        Returns:
+            Sorted, de-duplicated list of audio file paths.
+        """
+        return self._resolve_audio_files(
+            targets, self.recursive if recursive is None else recursive
+        )
+
+    def is_indexed(self, file_path: str | Path) -> bool:
+        """Return True if any chunk from file_path is already stored."""
+        return self.index_backend.store.has_filepath(str(file_path))
+
     def _resolve_audio_files(
         self,
         targets: str | Path | Sequence[str | Path],

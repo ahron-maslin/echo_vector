@@ -10,9 +10,12 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
+from echovector.embeddings.ast_model import ASTBackend
 from echovector.embeddings.cache import EmbeddingCache
 from echovector.embeddings.clap import _CLAP_AVAILABLE, ClapBackend
 from echovector.embeddings.factory import get_embedding_model
+from echovector.embeddings.hubert import HubertBackend
+from echovector.embeddings.wav2vec2 import Wav2Vec2Backend
 
 
 @pytest.mark.skipif(not _CLAP_AVAILABLE, reason="torch/transformers not installed")
@@ -137,6 +140,20 @@ class TestEmbeddingFactory(unittest.TestCase):
         """Test that factory accepts names ignoring case."""
         backend = get_embedding_model("WHISPER")
         assert backend.__class__.__name__ == "WhisperBackend"
+
+
+@pytest.mark.parametrize(
+    ("backend_cls", "expected_dim"),
+    [(HubertBackend, 768), (Wav2Vec2Backend, 768), (ASTBackend, 768)],
+)
+def test_stub_backends_raise_not_implemented(backend_cls, expected_dim):
+    """Stub backends should report their dimension but refuse to embed."""
+    backend = backend_cls()
+    assert backend.embedding_dim == expected_dim
+    with pytest.raises(NotImplementedError):
+        backend.embed_audio(["dummy.wav"])
+    with pytest.raises(NotImplementedError):
+        backend.embed_text(["hello"])
 
 
 if __name__ == "__main__":

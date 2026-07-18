@@ -8,6 +8,11 @@ from typing import Any
 from .base import BaseStore
 
 
+def _escape_like(value: str) -> str:
+    """Escape SQL LIKE wildcards (`%`, `_`) so filepaths match literally."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 class SQLiteStore(BaseStore):
     """SQLite-based store for metadata and string ID persistence."""
 
@@ -120,8 +125,8 @@ class SQLiteStore(BaseStore):
         """
         cursor = self._conn.cursor()
         cursor.execute(
-            "SELECT 1 FROM metadata WHERE string_id LIKE ? LIMIT 1",
-            (filepath + "#%",),
+            "SELECT 1 FROM metadata WHERE string_id LIKE ? ESCAPE '\\' LIMIT 1",
+            (_escape_like(filepath) + "#%",),
         )
         return cursor.fetchone() is not None
 
@@ -133,8 +138,8 @@ class SQLiteStore(BaseStore):
         """
         cursor = self._conn.cursor()
         cursor.execute(
-            "SELECT int_id FROM metadata WHERE string_id LIKE ?",
-            (filepath + "#%",),
+            "SELECT int_id FROM metadata WHERE string_id LIKE ? ESCAPE '\\'",
+            (_escape_like(filepath) + "#%",),
         )
         return [row[0] for row in cursor.fetchall()]
 

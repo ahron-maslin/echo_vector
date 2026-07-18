@@ -66,6 +66,75 @@ def test_index_search_and_stats_commands(tmp_path: Path) -> None:
     assert "1" in stats_result.stdout
 
 
+def test_index_with_reset_and_device_flag(tmp_path: Path) -> None:
+    """--reset clears an existing index; --device is forwarded to the backend."""
+    audio_path = tmp_path / "tone.wav"
+    store_dir = tmp_path / "index"
+    _write_tone(audio_path)
+
+    runner.invoke(
+        app,
+        ["index", str(audio_path), "--store-dir", str(store_dir), "--backend", "local"],
+    )
+
+    # `local` backend doesn't accept a `device` kwarg, so this should fail cleanly
+    # via the CLI's error handler rather than crashing with a raw traceback.
+    result = runner.invoke(
+        app,
+        [
+            "index",
+            str(audio_path),
+            "--store-dir",
+            str(store_dir),
+            "--backend",
+            "local",
+            "--device",
+            "cpu",
+            "--reset",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "Indexing failed" in result.stdout
+
+
+def test_search_command_no_results(tmp_path: Path) -> None:
+    """Searching an empty index should report no results, not error."""
+    store_dir = tmp_path / "index"
+    result = runner.invoke(
+        app,
+        ["search", "anything", "--store-dir", str(store_dir), "--backend", "local"],
+    )
+    assert result.exit_code == 0
+    assert "No results found." in result.stdout
+
+
+def test_search_command_failure_reports_error(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "search",
+            "anything",
+            "--store-dir",
+            str(tmp_path / "index"),
+            "--backend",
+            "local",
+            "--device",
+            "cpu",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "Search failed" in result.stdout
+
+
+def test_stats_command_failure_reports_error(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        ["stats", "--store-dir", str(tmp_path / "index"), "--backend", "nonexistent"],
+    )
+    assert result.exit_code == 1
+    assert "Stats failed" in result.stdout
+
+
 def test_help_command() -> None:
     """Test the help command."""
     result = runner.invoke(app, ["--help"])
