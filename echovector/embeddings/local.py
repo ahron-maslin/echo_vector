@@ -9,6 +9,10 @@ import soundfile as sf
 
 from echovector.embeddings.base import EmbeddingBackend
 
+#: Lowest frequency treated as "bright" when placing a spectral centroid on the
+#: 0-1 scale. Below this, everything reads as bass.
+_MIN_CENTROID_HZ = 50.0
+
 
 class LocalFeatureBackend(EmbeddingBackend):
     """Small dependency-only backend that avoids model downloads.
@@ -26,18 +30,60 @@ class LocalFeatureBackend(EmbeddingBackend):
         """Return the feature vector size."""
         return 8
 
+    @property
+    def fingerprint(self) -> str:
+        """Return the identity of this backend's feature definition."""
+        return f"local:acoustic-v2:sr={self.sample_rate}"
+
+    def _log_frequency_position(self, hz: float) -> float:
+        """Place a frequency on a 0-1 scale by octave rather than by hertz.
+
+        Dividing by Nyquist crushes everything audible into the bottom of the
+        range: an 880 Hz tone scores 0.055 against a 16 kHz Nyquist, so the
+        feature that should separate "high" from "low" barely moves while the
+        derived inverse dominates. Octaves spread the same content evenly.
+        """
+        nyquist = self.sample_rate / 2
+        if hz <= _MIN_CENTROID_HZ or nyquist <= _MIN_CENTROID_HZ:
+            return 0.0
+        span = np.log2(nyquist / _MIN_CENTROID_HZ)
+        return float(np.clip(np.log2(hz / _MIN_CENTROID_HZ) / span, 0.0, 1.0))
+
     def embed_audio(self, audio_paths: list[str]) -> npt.NDArray[np.float32]:
         """Embed audio files using simple acoustic descriptors."""
+        if not audio_paths:
+            return np.empty((0, self.embedding_dim), dtype=np.float32)
         return np.vstack([self._embed_audio_file(path) for path in audio_paths]).astype(np.float32)
+
+    def embed_audio_arrays(
+        self,
+        waveforms: list[npt.NDArray[np.float32]],
+        sample_rate: int,
+    ) -> npt.NDArray[np.float32]:
+        """Embed in-memory mono waveforms using the same acoustic descriptors."""
+        if not waveforms:
+            return np.empty((0, self.embedding_dim), dtype=np.float32)
+        return np.vstack(
+            [self._embed_waveform(w, sample_rate) for w in waveforms],
+        ).astype(np.float32)
 
     def embed_text(self, texts: list[str]) -> npt.NDArray[np.float32]:
         """Embed text queries with a keyword-weighted acoustic proxy."""
+        if not texts:
+            return np.empty((0, self.embedding_dim), dtype=np.float32)
         return np.vstack([self._embed_text(text) for text in texts]).astype(np.float32)
 
     def _embed_audio_file(self, path: str) -> npt.NDArray[np.float32]:
         audio, sample_rate = sf.read(path, dtype="float32", always_2d=False)
+        return self._embed_waveform(audio, int(sample_rate))
+
+    def _embed_waveform(
+        self,
+        audio: npt.NDArray[np.float32],
+        sample_rate: int,
+    ) -> npt.NDArray[np.float32]:
         if audio.ndim > 1:
-            audio = np.mean(audio, axis=1)
+            audio = np.asarray(np.mean(audio, axis=1), dtype=np.float32)
         if sample_rate != self.sample_rate:
             audio = librosa.resample(
                 y=audio,
@@ -52,13 +98,11 @@ class LocalFeatureBackend(EmbeddingBackend):
         duration = len(audio) / self.sample_rate
         rms = float(np.sqrt(np.mean(np.square(audio))))
         zcr = float(np.mean(librosa.feature.zero_crossing_rate(y=audio)[0]))
-        centroid = float(
-            np.mean(librosa.feature.spectral_centroid(y=audio, sr=self.sample_rate)[0])
-            / (self.sample_rate / 2)
+        centroid = self._log_frequency_position(
+            float(np.mean(librosa.feature.spectral_centroid(y=audio, sr=self.sample_rate)[0]))
         )
-        bandwidth = float(
-            np.mean(librosa.feature.spectral_bandwidth(y=audio, sr=self.sample_rate)[0])
-            / (self.sample_rate / 2)
+        bandwidth = self._log_frequency_position(
+            float(np.mean(librosa.feature.spectral_bandwidth(y=audio, sr=self.sample_rate)[0]))
         )
         flatness = float(np.mean(librosa.feature.spectral_flatness(y=audio)[0]))
 
@@ -67,11 +111,11 @@ class LocalFeatureBackend(EmbeddingBackend):
                 min(duration / 30.0, 1.0),
                 min(rms * 4.0, 1.0),
                 min(zcr * 8.0, 1.0),
-                min(centroid, 1.0),
-                min(bandwidth, 1.0),
+                centroid,
+                bandwidth,
                 min(flatness * 10.0, 1.0),
                 1.0 if rms < 0.01 else 0.0,
-                max(1.0 - min(centroid, 1.0), 0.0),
+                max(1.0 - centroid, 0.0),
             ],
             dtype=np.float32,
         )

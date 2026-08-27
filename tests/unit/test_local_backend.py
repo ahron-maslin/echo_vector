@@ -37,6 +37,37 @@ def test_embed_audio_silence_returns_zero_vector(tmp_path):
     np.testing.assert_array_equal(embedding[0], np.zeros(8, dtype=np.float32))
 
 
+def test_pitch_queries_separate_high_from_low_audio(tmp_path):
+    """The smoke backend must actually rank, not just return something.
+
+    Scaling the spectral centroid by Nyquist compressed all audible content
+    into the bottom of the range, leaving high/low queries separated by ~0.0005
+    — noise. Octave scaling is what makes the ordering mean anything.
+    """
+    high, low = tmp_path / "high.wav", tmp_path / "low.wav"
+    _write_tone(high, frequency=880.0)
+    _write_tone(low, frequency=110.0)
+
+    backend = LocalFeatureBackend()
+    high_vec, low_vec = backend.embed_audio([str(high), str(low)])
+
+    bright = backend.embed_text(["high bright alarm tone"])[0]
+    deep = backend.embed_text(["low deep bass tone"])[0]
+
+    assert float(high_vec @ bright) > float(low_vec @ bright) + 0.05
+    assert float(low_vec @ deep) > float(high_vec @ deep) + 0.05
+
+
+def test_centroid_scaling_uses_the_full_range(tmp_path):
+    """A mid-range tone should land near the middle, not pinned at zero."""
+    audio_path = tmp_path / "tone.wav"
+    _write_tone(audio_path, frequency=880.0)
+
+    centroid = LocalFeatureBackend().embed_audio([str(audio_path)])[0][3]
+
+    assert 0.15 < float(centroid) < 0.85
+
+
 def test_embed_text_keyword_branches():
     backend = LocalFeatureBackend()
     keywords = [

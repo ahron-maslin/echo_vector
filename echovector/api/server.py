@@ -1,4 +1,10 @@
-"""FastAPI server for EchoVector."""
+"""FastAPI server for EchoVector.
+
+Security: this server has no authentication and `POST /index` reads whatever
+filesystem paths the request body names, while `POST /reset` deletes the index.
+It is meant for localhost or for deployment behind an authenticating proxy that
+restricts those routes. Do not bind it to a public interface as-is.
+"""
 
 from __future__ import annotations
 
@@ -7,13 +13,15 @@ from typing import TYPE_CHECKING, Any
 from fastapi import Depends, FastAPI
 from pydantic import BaseModel, Field
 
+from echovector import __version__
+
 if TYPE_CHECKING:
     from echovector.core import EchoVector
 
 app = FastAPI(
     title="EchoVector API",
     description="Semantic search over audio files.",
-    version="0.1.0",
+    version=__version__,
 )
 
 # Default engine instance — override via app.dependency_overrides in tests.

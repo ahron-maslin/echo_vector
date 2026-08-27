@@ -10,7 +10,10 @@ from transformers import ClapModel, ClapProcessor
 
 from echovector.embeddings.base import EmbeddingBackend
 
-_CLAP_AVAILABLE = True
+# CLAP's feature extractor crops anything longer than this to a random window,
+# so chunks must stay at or below the limit for embeddings to be deterministic
+# and to actually describe the timestamp range recorded alongside them.
+DEFAULT_MAX_AUDIO_SECONDS = 10.0
 
 
 class ClapBackend(EmbeddingBackend):
@@ -30,6 +33,7 @@ class ClapBackend(EmbeddingBackend):
             model_name: The Hugging Face model identifier.
             device: Device to run the model on (e.g., 'cpu', 'cuda').
         """
+        self.model_name = model_name
         if device is None:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
         else:
@@ -48,10 +52,38 @@ class ClapBackend(EmbeddingBackend):
         """Return the dimensionality of the generated embeddings."""
         return cast("int", self._embedding_dim)
 
-    def _load_and_resample(self, path: str, target_sr: int) -> np.ndarray:
+    @property
+    def fingerprint(self) -> str:
+        """Return the identity of the exact weights backing this backend."""
+        return f"clap:{self.model_name}"
+
+    def _feature_extractor_setting(self, name: str, default: float) -> float:
+        """Read a numeric setting from the feature extractor, falling back to a default.
+
+        Processors vary across transformers versions (and are mocked in tests),
+        so a missing or non-numeric value must not break embedding.
+        """
+        feature_extractor = getattr(self.processor, "feature_extractor", None)
+        value = getattr(feature_extractor, name, None)
+        try:
+            return float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return default
+
+    @property
+    def target_sample_rate(self) -> int:
+        """Return the sample rate CLAP's feature extractor expects."""
+        return int(self._feature_extractor_setting("sampling_rate", 48_000.0))
+
+    @property
+    def max_audio_seconds(self) -> float:
+        """Return the longest segment CLAP embeds without cropping it."""
+        return self._feature_extractor_setting("max_length_s", DEFAULT_MAX_AUDIO_SECONDS)
+
+    def _load_and_resample(self, path: str, target_sr: int) -> npt.NDArray[np.float32]:
         """Load audio and resample to the target sample rate."""
         audio_array, _ = librosa.load(path, sr=target_sr, mono=True)
-        return audio_array
+        return cast("npt.NDArray[np.float32]", audio_array)
 
     def embed_audio(self, audio_paths: list[str]) -> npt.NDArray[np.float32]:
         """Embed a batch of audio files into the CLAP semantic space.
@@ -62,17 +94,47 @@ class ClapBackend(EmbeddingBackend):
         Returns:
             A numpy array of shape (batch_size, embedding_dim).
         """
-        target_sr = 48000  # Default for CLAP
-        feature_extractor = getattr(self.processor, "feature_extractor", None)
-        if feature_extractor is not None and hasattr(feature_extractor, "sampling_rate"):
-            target_sr = int(getattr(feature_extractor, "sampling_rate", target_sr))
-
+        target_sr = self.target_sample_rate
         audios = [self._load_and_resample(path, target_sr) for path in audio_paths]
+        return self._embed_waveforms(audios, target_sr)
+
+    def embed_audio_arrays(
+        self,
+        waveforms: list[npt.NDArray[np.float32]],
+        sample_rate: int,
+    ) -> npt.NDArray[np.float32]:
+        """Embed in-memory mono waveforms without a temp-file round trip.
+
+        Args:
+            waveforms: Mono float32 arrays.
+            sample_rate: Sample rate shared by every waveform in the batch.
+
+        Returns:
+            A numpy array of shape (batch_size, embedding_dim).
+        """
+        target_sr = self.target_sample_rate
+        if sample_rate != target_sr:
+            waveforms = [
+                cast(
+                    "npt.NDArray[np.float32]",
+                    librosa.resample(y=w, orig_sr=sample_rate, target_sr=target_sr),
+                )
+                for w in waveforms
+            ]
+        return self._embed_waveforms(waveforms, target_sr)
+
+    def _embed_waveforms(
+        self,
+        waveforms: list[npt.NDArray[np.float32]],
+        sample_rate: int,
+    ) -> npt.NDArray[np.float32]:
+        if not waveforms:
+            return np.empty((0, self.embedding_dim), dtype=np.float32)
 
         inputs = cast("Any", self.processor)(
-            audios=audios,
+            audios=waveforms,
             return_tensors="pt",
-            sampling_rate=target_sr,
+            sampling_rate=sample_rate,
         )
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
 

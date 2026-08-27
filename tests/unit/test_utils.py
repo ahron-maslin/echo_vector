@@ -1,4 +1,4 @@
-"""Unit tests for echovector.utils (Config, logging) and evaluation.metrics."""
+"""Unit tests for echovector.utils (logging) and evaluation.metrics."""
 
 import logging
 
@@ -6,34 +6,7 @@ import numpy as np
 import pytest
 
 from echovector.evaluation.metrics import cosine_similarity, euclidean_distance
-from echovector.utils.config import Config
 from echovector.utils.logging import setup_logger
-
-
-def test_config_get_set_default():
-    config = Config()
-    assert config.get("missing") is None
-    assert config.get("missing", "fallback") == "fallback"
-
-    config.set("key", "value")
-    assert config.get("key") == "value"
-
-
-def test_config_update():
-    config = Config({"a": 1})
-    config.update({"a": 2, "b": 3})
-    assert config.get("a") == 2
-    assert config.get("b") == 3
-
-
-def test_config_json_roundtrip(tmp_path):
-    path = tmp_path / "config.json"
-    config = Config({"a": 1, "b": "two"})
-    config.to_json(path)
-
-    loaded = Config.from_json(path)
-    assert loaded.get("a") == 1
-    assert loaded.get("b") == "two"
 
 
 def test_setup_logger_returns_configured_logger():

@@ -33,13 +33,51 @@ def test_sqlite_store(store: SQLiteStore) -> None:
     assert ret_meta == [{"author": "alice"}, {"author": "bob"}, None]
 
 
-def test_has_filepath_does_not_match_like_wildcards(store: SQLiteStore) -> None:
-    """Filenames containing literal `_`/`%` must not act as SQL LIKE wildcards."""
-    store.add([0], ["/audio/songX1.wav#0.000-1.000"], [{}])
+@pytest.mark.parametrize(
+    "filepath",
+    [
+        "/audio/song_1.wav",  # `_` is a LIKE wildcard
+        "/audio/song%1.wav",  # `%` is a LIKE wildcard
+        "/audio/track#2.wav",  # `#` is the chunk-id separator
+    ],
+)
+def test_filepath_matching_is_exact(store: SQLiteStore, filepath: str) -> None:
+    """Chunks resolve to their source file by column, not by string pattern.
 
-    assert store.has_filepath("/audio/song_1.wav") is False
-    assert store.get_int_ids_for_filepath("/audio/song_1.wav") == []
-    assert store.has_filepath("/audio/songX1.wav") is True
+    Matching on a `LIKE 'path#%'` prefix mis-fires on filenames containing SQL
+    wildcards or the separator itself.
+    """
+    store.add([0], [f"{filepath}#0.000-1.000"], [{"filepath": filepath}])
+
+    assert store.has_filepath(filepath) is True
+    assert store.get_int_ids_for_filepath(filepath) == [0]
+    assert store.has_filepath("/audio/songX1.wav") is False
+
+
+def test_filepath_column_backfills_for_legacy_stores(tmp_path) -> None:
+    """Stores written before the filepath column must migrate on open."""
+    import json
+    import sqlite3
+
+    db_path = tmp_path / "legacy.sqlite"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE metadata (int_id INTEGER PRIMARY KEY, "
+        "string_id TEXT UNIQUE NOT NULL, metadata_json TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO metadata VALUES (?, ?, ?)",
+        (0, "/audio/old.wav#0.000-1.000", json.dumps({"filepath": "/audio/old.wav"})),
+    )
+    conn.commit()
+    conn.close()
+
+    store = SQLiteStore(str(db_path))
+    try:
+        assert store.has_filepath("/audio/old.wav") is True
+        assert store.count_files() == 1
+    finally:
+        store.close()
 
 
 def test_sqlite_store_add_mismatched_lengths(store: SQLiteStore) -> None:

@@ -1,4 +1,4 @@
-.PHONY: install lint typecheck test test-unit test-integration test-e2e test-perf coverage mutate docs serve-docs clean
+.PHONY: install lint typecheck test test-unit test-integration test-e2e coverage mutate clean all
 
 install:
 	uv sync --all-extras
@@ -24,10 +24,7 @@ test-integration:
 	uv run pytest tests/integration/ -v -m integration
 
 test-e2e:
-	uv run pytest tests/e2e/ -v -m e2e
-
-test-perf:
-	uv run pytest tests/performance/ -v -m performance
+	uv run pytest tests/e2e/ -v
 
 coverage:
 	uv run pytest tests/ --cov=echovector --cov-report=html --cov-report=term-missing
@@ -35,14 +32,8 @@ coverage:
 mutate:
 	uv run mutmut run
 
-docs:
-	cd docs && uv run mkdocs build
-
-serve-docs:
-	cd docs && uv run mkdocs serve
-
 clean:
-	rm -rf dist/ build/ *.egg-info/ .pytest_cache/ .mypy_cache/ .ruff_cache/ htmlcov/ .coverage site/ .mutmut-cache/
+	rm -rf dist/ build/ *.egg-info/ .pytest_cache/ .mypy_cache/ .ruff_cache/ htmlcov/ .coverage .mutmut-cache/
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
 all: lint typecheck test

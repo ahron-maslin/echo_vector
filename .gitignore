@@ -66,10 +66,9 @@ Thumbs.db
 # Benchmark outputs
 benchmark_results/
 
-# Demo artifacts
+# Demo artifacts (demo.py itself is tracked; these are what it generates)
 demo_audio/
 demo_index/
-demo.py
 
 # EchoVector index stores
 ev-index/

@@ -35,9 +35,10 @@ Text Query → Text Embedding ──────────────┘
 - ⚡ **FAISS-powered** — Approximate nearest neighbor search
 - 🔌 **Pluggable backends** — CLAP implemented today; Whisper, wav2vec2, HuBERT, AST are stubbed for future work
 - 🧪 **Offline smoke backend** — `local` backend for CI/Kaggle tests without model downloads
-- 📊 **Rich CLI** — Progress bars, colors, benchmarking mode
+- 🔒 **Self-describing indexes** — a manifest pins the model that built a store, so it can't be queried with the wrong one
+- 📊 **Rich CLI** — Progress bars, colors, result filtering
 - 🌐 **REST API** — Optional FastAPI server
-- 📦 **Production-ready** — Typed, tested, documented
+- 📦 **Typed and tested** — strict mypy, ruff, >95% coverage
 
 ## Quick Start
 
@@ -56,16 +57,20 @@ uv add echo_vector
 ### CLI Usage
 
 ```bash
-# One-time indexing: split audio into timestamped chunks and embed each chunk
+# One-time indexing: split audio into timestamped chunks and embed each chunk.
+# Directories are searched recursively; pass --no-recursive to stay at the top level.
 echovector index ./meetings
 
 # Fast repeated search: embed only the text query and search the saved FAISS index
 echovector search "discussion about transformers"
 
 # Search with options
-echovector search "pricing strategy" --top-k 10
+echovector search "pricing strategy" --top-k 10 --min-score 0.2
 
-# View index statistics
+# Already-indexed files are skipped; --force re-indexes them in place
+echovector index ./meetings --force
+
+# View index statistics (reads the manifest — no model load)
 echovector stats
 ```
 
@@ -100,6 +105,33 @@ for r in results:
         f"[{r.timestamp_range.start:.1f}s - {r.timestamp_range.end:.1f}s] "
         f"score={r.score:.4f}"
     )
+```
+
+### Filtering results
+
+```python
+from echovector import EchoVector, SearchFilter
+
+ev = EchoVector()
+results = ev.search(
+    "conversation about CUDA kernels",
+    top_k=10,
+    filters=SearchFilter(min_score=0.2, filepaths=["/audio/standup.wav"]),
+)
+```
+
+Filters run after retrieval, so EchoVector over-fetches candidates to still
+return a full page of `top_k` results.
+
+### Chunk length and the model's window
+
+`chunk_seconds` must fit the window the backend can embed. CLAP crops anything
+longer than 10s to a *random* 10s window, which would make the embedding both
+non-deterministic and unrepresentative of the timestamp range stored beside it.
+EchoVector rejects the combination rather than indexing something misleading:
+
+```python
+EchoVector(chunk_seconds=30.0)  # with CLAP: ValueError at index time
 ```
 
 ## Testing on Kaggle
@@ -176,10 +208,24 @@ echovector/
 ├── search/       # Search engine, filtering, result hydration
 ├── cli/          # Typer-based CLI with Rich output
 ├── api/          # Optional FastAPI server
-├── evaluation/   # Metrics (recall@k, throughput)
-├── benchmarks/   # Reproducible benchmark harness
-└── utils/        # Config, logging, helpers
+├── evaluation/   # Vector similarity metrics
+└── utils/        # Logging helpers
 ```
+
+### How a store is laid out
+
+```
+<store-dir>/
+├── index.faiss       # the vectors (FAISS IndexIDMap2 over IndexFlatIP)
+├── metadata.sqlite   # chunk -> source file, timestamps, audio metadata
+└── manifest.json     # which backend, dimension, and chunking built the index
+```
+
+The manifest is what makes a store safe to reopen. Vectors carry no record of
+the model that produced them, so without it an index built with CLAP could be
+queried with another backend of the same width and would return confident,
+meaningless scores. EchoVector compares the manifest on open and refuses the
+mismatch instead.
 
 ## Supported Embedding Backends
 
@@ -197,7 +243,7 @@ echovector/
 ```bash
 # Clone and install
 git clone https://github.com/ahron-maslin/echo_vector.git
-cd echovector
+cd echo_vector
 uv sync --all-extras
 
 # Run checks
@@ -207,6 +253,26 @@ make test
 make coverage
 ```
 
+## REST API
+
+The optional FastAPI server has **no authentication**: `POST /index` reads any
+filesystem path the request names and `POST /reset` deletes the index. Run it on
+localhost, or behind a proxy that authenticates those routes — never bound to a
+public interface as-is.
+
+```bash
+pip install "echo_vector[api]"
+```
+
+```python
+import uvicorn
+from echovector import EchoVector
+from echovector.api.server import app, configure_engine
+
+configure_engine(EchoVector(store_dir="./ev-index", backend="local"))
+uvicorn.run(app, host="127.0.0.1", port=8000)
+```
+
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).

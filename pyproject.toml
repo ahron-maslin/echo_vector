@@ -8,6 +8,7 @@ dynamic = ["version"]
 description = "Semantic text search over audio files without full transcription"
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 authors = [
     { name = "EchoVector Contributors" },
@@ -33,7 +34,7 @@ dependencies = [
     "soundfile>=0.12,<1",
     "librosa>=0.10,<1",
     "faiss-cpu>=1.7,<2",
-    "typer[all]>=0.12,<1",
+    "typer>=0.12,<1",
     "rich>=13.7,<14",
     "tqdm>=4.66,<5",
     "torch>=2.1,<3",
@@ -57,13 +58,7 @@ dev = [
     "mypy>=1.8,<2",
     "pre-commit>=3.6,<4",
 ]
-docs = [
-    "mkdocs-material>=9.5,<10",
-    "mkdocstrings[python]>=0.24,<1",
-    "mkdocs-gen-files>=0.5,<1",
-    "mkdocs-literate-nav>=0.6,<1",
-]
-all = ["echo_vector[api,dev,docs]"]
+all = ["echo_vector[api,dev]"]
 
 [project.scripts]
 echovector = "echovector.cli.main:app"
@@ -73,7 +68,6 @@ Homepage = "https://github.com/ahron-maslin/echo_vector"
 Documentation = "https://github.com/ahron-maslin/echo_vector#readme"
 Repository = "https://github.com/ahron-maslin/echo_vector"
 Issues = "https://github.com/ahron-maslin/echo_vector/issues"
-Changelog = "https://github.com/ahron-maslin/echo_vector/blob/main/CHANGELOG.md"
 
 [tool.hatch.version]
 source = "vcs"
@@ -156,7 +150,6 @@ addopts = [
     "-ra",
     "--strict-markers",
     "--strict-config",
-    "-x",
     "--tb=short",
 ]
 markers = [
@@ -176,10 +169,6 @@ filterwarnings = [
 [tool.coverage.run]
 source = ["echovector"]
 branch = true
-omit = [
-    "echovector/benchmarks/*",
-    "echovector/api/*",
-]
 
 [tool.coverage.report]
 fail_under = 95

@@ -8,6 +8,7 @@ from echovector.utils.logging import setup_logger
 
 logger = setup_logger("demo")
 
+
 def generate_synthetic_wav(
     filepath: str,
     duration: float,
@@ -21,6 +22,7 @@ def generate_synthetic_wav(
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     sf.write(filepath, data, sr)
     logger.info(f"Generated synthetic audio at {filepath}")
+
 
 def main() -> None:
     """Run an end-to-end local EchoVector demo."""
@@ -50,7 +52,8 @@ def main() -> None:
 
     # 4. Search across indexed audio
     print("\n--- Searching the Index ---")
-    # Since CLAP maps descriptive text queries to audio features, we query semantically
+    # The local backend maps descriptive words to coarse acoustic features, so
+    # the query is phrased in terms of how the audio sounds rather than content.
     query = "high frequency alarm tone"
     print(f"Searching for: '{query}'")
     results = ev.search(query, top_k=2)
@@ -71,6 +74,7 @@ def main() -> None:
         print(f"{k}: {v}")
 
     print("\nDemo completed successfully!")
+
 
 if __name__ == "__main__":
     main()

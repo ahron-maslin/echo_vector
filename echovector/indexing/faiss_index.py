@@ -58,15 +58,58 @@ class FaissIndex(BaseIndex):
         # Ensure embeddings are contiguous and float32
         embeddings_f32 = np.ascontiguousarray(embeddings, dtype=np.float32)
 
-        # Use max stored ID + 1 so IDs remain unique after deletions.
-        start_id = self.store.get_max_int_id() + 1
-        int_ids = list(range(start_id, start_id + num_vectors))
+        # The store treats string_id as unique and replaces on conflict. Evict the
+        # superseded vectors first, otherwise they linger in Faiss with no store row
+        # and silently consume result slots on every later search.
+        superseded = self.store.get_int_ids_for_string_ids(list(ids))
+        if superseded:
+            self.remove_int_ids(superseded)
+
+        int_ids = list(range(self.next_int_id(), self.next_int_id() + num_vectors))
 
         # Add to Faiss index with explicit IDs
         self.index.add_with_ids(embeddings_f32, np.array(int_ids, dtype=np.int64))
 
         # Add to SQLite store
         self.store.add(int_ids, ids, metadata)
+
+    def next_int_id(self) -> int:
+        """Return the next free integer ID.
+
+        Derived from both the store and the Faiss index. Using the store alone
+        restarts numbering at zero whenever the metadata database is lost or
+        replaced, which collides with IDs still held by a loaded index file.
+
+        Returns:
+            An integer ID not currently used by either half of the index.
+        """
+        return max(self.store.get_max_int_id(), self.max_faiss_int_id()) + 1
+
+    def max_faiss_int_id(self) -> int:
+        """Return the largest ID present in the Faiss index, or -1 if empty.
+
+        Returns:
+            The maximum assigned ID.
+        """
+        if self.index.ntotal == 0:
+            return -1
+        ids = faiss.vector_to_array(self.index.id_map)
+        return int(ids.max()) if ids.size else -1
+
+    def desync_report(self) -> str | None:
+        """Describe a mismatch between the vector index and the metadata store.
+
+        Returns:
+            A human-readable description, or None when the two agree.
+        """
+        vectors = int(self.index.ntotal)
+        rows = self.store.count()
+        if vectors == rows:
+            return None
+        return (
+            f"index holds {vectors} vector(s) but the metadata store holds {rows} row(s); "
+            f"the two files are out of sync"
+        )
 
     def search(
         self, query_embeddings: npt.NDArray[np.float32], k: int = 10
@@ -146,13 +189,13 @@ class FaissIndex(BaseIndex):
             return
         ids_array = np.array(int_ids, dtype=np.int64)
         self.index.remove_ids(faiss.IDSelectorBatch(ids_array))
-        placeholders = ",".join("?" for _ in int_ids)
-        delete_query = f"DELETE FROM metadata WHERE int_id IN ({placeholders})"  # noqa: S608
-        self.store._conn.execute(delete_query, int_ids)
-        self.store._conn.commit()
+        self.store.delete_by_int_ids(int_ids)
 
     def save(self, index_path: str) -> None:
         """Save the Faiss index to disk.
+
+        Written to a sibling temp file and renamed, so an interrupted save
+        leaves the previous index intact rather than a truncated one.
 
         Args:
             index_path: The file path to save the index to.
@@ -160,7 +203,9 @@ class FaissIndex(BaseIndex):
         parent = os.path.dirname(index_path)
         if parent:
             os.makedirs(parent, exist_ok=True)
-        faiss.write_index(self.index, index_path)
+        temp_path = f"{index_path}.tmp"
+        faiss.write_index(self.index, temp_path)
+        os.replace(temp_path, index_path)
 
     def load(self, index_path: str) -> None:
         """Load the Faiss index from disk.
@@ -174,9 +219,20 @@ class FaissIndex(BaseIndex):
         """
         if not os.path.exists(index_path):
             raise FileNotFoundError(f"Index file {index_path} not found.")
-        self.index = cast("faiss.IndexIDMap2", faiss.read_index(index_path))
-        if self.index.d != self.dimension:
+
+        loaded = faiss.read_index(index_path)
+        if loaded.d != self.dimension:
             raise ValueError(
-                f"Loaded index dimension ({self.index.d}) does not match "
+                f"Loaded index dimension ({loaded.d}) does not match "
                 f"expected dimension ({self.dimension})"
             )
+        # Vectors are addressed by explicit IDs that join to the metadata store.
+        # An index saved without an ID map cannot support that, and casting it
+        # anyway only defers the failure to a raw error deep inside Faiss.
+        if not hasattr(loaded, "id_map"):
+            raise ValueError(
+                f"Index file {index_path} has no ID map (type {type(loaded).__name__}), so its "
+                f"vectors cannot be matched to stored metadata. It was written by an "
+                f"incompatible version of EchoVector; re-index this store to rebuild it."
+            )
+        self.index = cast("faiss.IndexIDMap2", loaded)

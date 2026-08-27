@@ -1,14 +1,17 @@
 """Command-line interface for EchoVector."""
 
+import inspect
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from rich.console import Console
 from rich.progress import Progress
 from rich.table import Table
 
-from echovector import EchoVector
+from echovector import EchoVector, SearchFilter, __version__
+from echovector.embeddings.factory import backend_class_for
+from echovector.indexing.manifest import IndexManifest
 
 app = typer.Typer(
     name="echovector",
@@ -17,11 +20,33 @@ app = typer.Typer(
 )
 console = Console()
 
+StoreDirOption = Annotated[Path, typer.Option("--store-dir", help="Directory for index files.")]
+BackendOption = Annotated[str, typer.Option("--backend", help="Embedding backend to use.")]
+DeviceOption = Annotated[
+    str | None,
+    typer.Option("--device", help="Model device, e.g. cpu or cuda. Ignored by CPU-only backends."),
+]
 
-def _open_engine(store_dir: Path, backend: str, device: str | None) -> EchoVector:
-    if device:
-        return EchoVector(store_dir=store_dir, backend=backend, device=device)
-    return EchoVector(store_dir=store_dir, backend=backend)
+
+def _backend_kwargs(backend: str, device: str | None) -> dict[str, Any]:
+    """Build backend kwargs, dropping options the backend cannot accept.
+
+    `--device` is a generic flag, but backends like `local` run on CPU only and
+    take no `device` argument. Forwarding it blindly turned a meaningless flag
+    into a hard failure.
+    """
+    if device is None:
+        return {}
+    try:
+        parameters = inspect.signature(backend_class_for(backend).__init__).parameters
+    except (ValueError, TypeError):  # pragma: no cover - builtins without signatures
+        return {"device": device}
+    if "device" in parameters:
+        return {"device": device}
+    console.print(
+        f"[yellow]Note:[/yellow] the '{backend}' backend does not use --device; ignoring it."
+    )
+    return {}
 
 
 @app.command()
@@ -32,20 +57,22 @@ def index(
     ],
     recursive: Annotated[
         bool,
-        typer.Option("--recursive", "-r", help="Recursively search directories for audio files."),
-    ] = False,
-    store_dir: Annotated[
-        Path,
-        typer.Option("--store-dir", help="Directory for index files."),
-    ] = Path(".echovector"),
-    backend: Annotated[str, typer.Option("--backend", help="Embedding backend to use.")] = "clap",
-    device: Annotated[
-        str | None,
-        typer.Option("--device", help="Model device, e.g. cpu or cuda."),
-    ] = None,
+        typer.Option(
+            "--recursive/--no-recursive",
+            "-r",
+            help="Search directories recursively for audio files.",
+        ),
+    ] = True,
+    store_dir: StoreDirOption = Path(".echovector"),
+    backend: BackendOption = "clap",
+    device: DeviceOption = None,
     reset: Annotated[
         bool,
         typer.Option("--reset", help="Clear the existing index before indexing."),
+    ] = False,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Re-index files that are already in the store."),
     ] = False,
     chunk_seconds: Annotated[
         float,
@@ -58,21 +85,13 @@ def index(
 ) -> None:
     """Index audio files for search."""
     try:
-        if device:
-            engine = EchoVector(
-                store_dir=store_dir,
-                backend=backend,
-                device=device,
-                chunk_seconds=chunk_seconds,
-                overlap_seconds=overlap_seconds,
-            )
-        else:
-            engine = EchoVector(
-                store_dir=store_dir,
-                backend=backend,
-                chunk_seconds=chunk_seconds,
-                overlap_seconds=overlap_seconds,
-            )
+        engine = EchoVector(
+            store_dir=store_dir,
+            backend=backend,
+            chunk_seconds=chunk_seconds,
+            overlap_seconds=overlap_seconds,
+            **_backend_kwargs(backend, device),
+        )
         if reset:
             engine.reset()
 
@@ -84,12 +103,22 @@ def index(
                     task, total=total, completed=done, description=f"Indexed {file_path.name}"
                 )
 
-            count = engine.index(files, recursive=recursive, on_file_indexed=_on_file_indexed)
+            count = engine.index(
+                files,
+                recursive=recursive,
+                force=force,
+                on_file_indexed=_on_file_indexed,
+            )
     except Exception as exc:
         console.print(f"[bold red]Indexing failed:[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
 
     console.print(f"[bold green]Indexing complete.[/bold green] Indexed {count} chunk(s).")
+    if count == 0:
+        console.print(
+            "[dim]Nothing new to index — matching files were already stored. "
+            "Use --force to re-index them.[/dim]"
+        )
     console.print(f"[dim]Store: {store_dir}[/dim]")
 
 
@@ -100,28 +129,33 @@ def search(
         int,
         typer.Option("--top-k", "-k", help="Number of top results to return."),
     ] = 5,
-    store_dir: Annotated[
-        Path,
-        typer.Option("--store-dir", help="Directory containing the index."),
-    ] = Path(".echovector"),
-    backend: Annotated[
-        str,
-        typer.Option("--backend", help="Embedding backend used for the index."),
-    ] = "clap",
-    device: Annotated[
-        str | None,
-        typer.Option("--device", help="Model device, e.g. cpu or cuda."),
+    store_dir: StoreDirOption = Path(".echovector"),
+    backend: BackendOption = "clap",
+    device: DeviceOption = None,
+    min_score: Annotated[
+        float | None,
+        typer.Option("--min-score", help="Discard results scoring below this threshold."),
     ] = None,
 ) -> None:
     """Search an existing vector index without scanning audio files."""
+    if not _require_index(store_dir):
+        raise typer.Exit(code=1)
+
     try:
-        engine = _open_engine(store_dir=store_dir, backend=backend, device=device)
-        results = engine.search(query, top_k=top_k)
+        engine = EchoVector(
+            store_dir=store_dir, backend=backend, **_backend_kwargs(backend, device)
+        )
+        filters = SearchFilter(min_score=min_score) if min_score is not None else None
+        results = engine.search(query, top_k=top_k, filters=filters)
     except Exception as exc:
         console.print(f"[bold red]Search failed:[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
 
-    table = Table(title=f"Top {top_k} Results for '{query}'")
+    if not results:
+        console.print("[yellow]No results found.[/yellow]")
+        return
+
+    table = Table(title=f"Top {len(results)} Results for '{query}'")
     table.add_column("Score", justify="right", style="cyan", no_wrap=True)
     table.add_column("File", style="magenta")
     table.add_column("Timestamp", justify="right", style="green")
@@ -133,30 +167,24 @@ def search(
             f"{result.timestamp_range.start:.1f}s-{result.timestamp_range.end:.1f}s",
         )
 
-    if results:
-        console.print(table)
-    else:
-        console.print("[yellow]No results found.[/yellow]")
+    console.print(table)
 
 
 @app.command()
 def stats(
-    store_dir: Annotated[
-        Path,
-        typer.Option("--store-dir", help="Directory containing the index."),
-    ] = Path(".echovector"),
-    backend: Annotated[
-        str,
-        typer.Option("--backend", help="Embedding backend used for the index."),
-    ] = "clap",
-    device: Annotated[
-        str | None,
-        typer.Option("--device", help="Model device, e.g. cpu or cuda."),
-    ] = None,
+    store_dir: StoreDirOption = Path(".echovector"),
+    backend: BackendOption = "clap",
+    device: DeviceOption = None,
 ) -> None:
     """Display statistics about the current index."""
+    if not _require_index(store_dir):
+        raise typer.Exit(code=1)
+
     try:
-        stats_data = _open_engine(store_dir=store_dir, backend=backend, device=device).stats()
+        engine = EchoVector(
+            store_dir=store_dir, backend=backend, **_backend_kwargs(backend, device)
+        )
+        stats_data = engine.stats()
     except Exception as exc:
         console.print(f"[bold red]Stats failed:[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
@@ -169,6 +197,26 @@ def stats(
         table.add_row(key, str(value))
 
     console.print(table)
+
+
+@app.command()
+def version() -> None:
+    """Print the installed EchoVector version."""
+    console.print(__version__)
+
+
+def _require_index(store_dir: Path) -> bool:
+    """Report a missing index clearly instead of returning an empty result set.
+
+    An unindexed directory and a query with no matches used to look identical.
+    """
+    if IndexManifest.path_for(store_dir).exists() or (store_dir / "index.faiss").exists():
+        return True
+    console.print(
+        f"[bold red]No index found at[/bold red] {store_dir}\n"
+        f"[dim]Run 'echovector index <audio-path> --store-dir {store_dir}' first.[/dim]"
+    )
+    return False
 
 
 if __name__ == "__main__":
