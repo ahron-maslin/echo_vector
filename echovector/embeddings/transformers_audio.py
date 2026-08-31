@@ -14,11 +14,15 @@ import numpy as np
 import numpy.typing as npt
 import torch
 
-from echovector.embeddings.base import EmbeddingBackend
+from echovector.embeddings.base import EmbeddingBackend, TextSearchUnsupportedError
 
-
-class TextSearchUnsupportedError(NotImplementedError):
-    """Raised when a text query is issued against an audio-only backend."""
+__all__ = [
+    "ASTBackend",
+    "HubertBackend",
+    "TextSearchUnsupportedError",
+    "TransformersAudioBackend",
+    "Wav2Vec2Backend",
+]
 
 
 class TransformersAudioBackend(EmbeddingBackend):

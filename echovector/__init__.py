@@ -4,6 +4,7 @@ import warnings
 from importlib.metadata import PackageNotFoundError, version
 
 from echovector.core import EchoVector
+from echovector.embeddings.base import TextSearchUnsupportedError
 from echovector.indexing.manifest import IndexMismatchError
 from echovector.search.filters import SearchFilter
 from echovector.search.results import SearchResult, TimestampRange
@@ -29,6 +30,7 @@ __all__ = [
     "IndexMismatchError",
     "SearchFilter",
     "SearchResult",
+    "TextSearchUnsupportedError",
     "TimestampRange",
     "__version__",
 ]

@@ -11,33 +11,49 @@
 
 ## What is EchoVector?
 
-EchoVector indexes audio files by generating **semantic embeddings directly from audio waveforms**, then lets you search them with natural language text queries — all without transcribing a single word.
-
-### Traditional approach (slow & expensive)
-
-```
-Audio → Full Transcription → Text Embeddings → Text Search
-```
-
-### EchoVector approach (fast & efficient)
+EchoVector indexes audio by embedding the **waveform itself**, then finds moments in it from a
+plain-language description of *how they sound* — no transcription anywhere in the pipeline.
 
 ```
 Audio → Audio Chunks → Audio Embeddings ─┐
-                                          ├─► ANN Search → Results
+                                          ├─► ANN Search → Timestamped moments
 Text Query → Text Embedding ──────────────┘
 ```
 
+### What it is good at
+
+The default backend, [CLAP](https://huggingface.co/laion/clap-htsat-unfused), is trained on audio
+paired with captions that *describe sound* — "a dog barking", "rain on a metal roof", "a car engine
+revving". So EchoVector is built for audio where the sound is the content:
+
+- Sound libraries, foley, and sample packs
+- Field recordings, wildlife, and bioacoustics
+- Security and industrial monitoring
+- Broadcast and archive material
+
+### What it is not for
+
+**Searching what people said.** CLAP encodes how audio *sounds*, not spoken content, so a query like
+`"the part where we discussed pricing"` has no acoustic signature to match and will not work.
+
+For speech, transcribe first and search the text — [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
+runs faster than real time on a laptop and answers that question directly. EchoVector is a poor
+substitute for transcription, and a good complement to it.
+
 ## Features
 
-- 🎵 **Multi-format support** — MP3, WAV, FLAC, M4A
+- 🎵 **Multi-format support** — MP3, WAV, FLAC, M4A, OGG, AIFF
 - 🧠 **Direct audio embeddings** — No transcription needed
-- 🔍 **Semantic search** — Query with natural language
-- ⚡ **FAISS-powered** — Approximate nearest neighbor search
-- 🔌 **Pluggable backends** — CLAP implemented today; Whisper, wav2vec2, HuBERT, AST are stubbed for future work
-- 🧪 **Offline smoke backend** — `local` backend for CI/Kaggle tests without model downloads
+- 🔍 **Text → audio search** — Describe the sound you want
+- 🪞 **Audio → audio search** — `similar` finds more that sounds like a clip you already have
+- 🎯 **Moment-level results** — Consecutive hits fold into one span instead of five near-identical chunks
+- 📐 **Measurable quality** — `eval` scores retrieval against a golden set (recall, nDCG, MRR, MAP)
+- ⚡ **FAISS-powered** — Exact `flat`, or approximate `ivf` / `hnsw` for large archives
 - 🔒 **Self-describing indexes** — a manifest pins the model that built a store, so it can't be queried with the wrong one
-- 📊 **Rich CLI** — Progress bars, colors, result filtering
-- 🌐 **REST API** — Optional FastAPI server
+- ♻️ **Change-aware** — edited files are re-indexed, deleted ones are pruned, long runs checkpoint
+- 🔌 **Pluggable backends** — CLAP for text search; wav2vec2, HuBERT, and AST for audio-to-audio
+- 🧪 **Offline smoke backend** — `local` backend for CI/Kaggle tests without model downloads
+- 🌐 **REST API** — Optional FastAPI server with background indexing jobs
 - 📦 **Typed and tested** — strict mypy, ruff, >95% coverage
 
 ## Quick Start
@@ -54,21 +70,30 @@ Or with uv:
 uv add echo_vector
 ```
 
+> **Heads-up on install size.** The default CLAP backend depends on PyTorch, and on Linux `pip`
+> pulls the CUDA build by default — roughly 4 GB. For a CPU-only machine, install the small wheels
+> first:
+>
+> ```bash
+> pip install torch --index-url https://download.pytorch.org/whl/cpu
+> pip install echo_vector
+> ```
+
 ### CLI Usage
 
 ```bash
 # One-time indexing: split audio into timestamped chunks and embed each chunk.
 # Directories are searched recursively; pass --no-recursive to stay at the top level.
-echovector index ./meetings
+echovector index ./sound-library
 
 # Fast repeated search: embed only the text query and search the saved FAISS index
-echovector search "discussion about transformers"
+echovector search "glass breaking"
 
 # Search with options
-echovector search "pricing strategy" --top-k 10 --min-score 0.2
+echovector search "heavy rain on a roof" --top-k 10 --min-score 0.2
 
 # Already-indexed files are skipped; --force re-indexes them in place
-echovector index ./meetings --force
+echovector index ./sound-library --force
 
 # View index statistics (reads the manifest — no model load)
 echovector stats
@@ -77,10 +102,86 @@ echovector stats
 For a no-download smoke test, use the deterministic local backend:
 
 ```bash
-echovector index ./meetings --backend local --store-dir ./ev-index
+echovector index ./sound-library --backend local --store-dir ./ev-index
 echovector search "high alarm tone" --backend local --store-dir ./ev-index
 echovector stats --backend local --store-dir ./ev-index
 ```
+
+### Finding more of the same sound
+
+`similar` searches with a clip instead of a sentence. It never touches the text tower, so it also
+works with the audio-only backends (`wav2vec2`, `hubert`, `ast`) that have no text side at all.
+
+```bash
+echovector similar ./samples/door-slam-03.wav --top-k 10
+```
+
+### Hearing what you found
+
+A result is a file plus a time range, so the next step is usually to listen to it:
+
+```bash
+# Write the moment out as its own file, with a little context either side
+echovector extract ./library/street.wav 124.0 134.0 --out ./clip.wav --padding 1.5
+
+# Or print a player command to run yourself (nothing is executed for you)
+echovector play ./library/street.wav 124.0 134.0 --player mpv
+```
+
+### Keeping an index honest
+
+Files are tracked by content signature, not just path, so an edited recording is re-read on the next
+index run rather than silently going stale.
+
+```bash
+# Report changed files and drop ones deleted from disk
+echovector prune
+
+# See what would change without touching the index
+echovector prune --check
+```
+
+### Measuring search quality
+
+Retrieval quality is the thing worth optimising, so it is worth measuring rather than guessing.
+Describe some queries and the moments that should answer them, then score the index:
+
+```json
+{
+  "name": "library-smoke",
+  "queries": [
+    {
+      "query": "glass breaking",
+      "relevant": [{"filepath": "/audio/foley-03.wav", "start": 12.0, "end": 20.0}]
+    }
+  ]
+}
+```
+
+```bash
+echovector eval ./golden.json --ks 1,5,10 --per-query
+```
+
+```
+metric         k=1      k=5     k=10
+------------------------------------
+recall       0.389    1.000    1.000
+precision    1.000    0.600    0.333
+hit_rate     1.000    1.000    1.000
+mrr          1.000    1.000    1.000
+ndcg         1.000    1.000    1.000
+map          1.000    1.000    1.000
+
+Latency: mean 7.7 ms | p50 5.6 ms | p95 16.6 ms | 130.5 queries/sec
+```
+
+A result counts as relevant when it overlaps an annotated span, so chunk boundaries do not have to
+line up with your annotations. Use `eval` to compare backends, chunk lengths, or index types against
+each other instead of by feel.
+
+> These figures come from a synthetic tone corpus used to exercise the harness — they say nothing
+> about real-world quality. **EchoVector has no published retrieval benchmark yet**; that is the
+> next thing worth doing, and this command is how it gets done.
 
 The search command does not reopen or scan the audio files. All expensive audio processing happens
 during `index`; `search` loads the saved vector index, embeds the short text query, and returns the
@@ -94,10 +195,10 @@ from echovector import EchoVector
 ev = EchoVector()
 
 # Index audio files
-ev.index("./meetings")
+ev.index("./sound-library")
 
 # Search with natural language
-results = ev.search("conversation about CUDA kernels")
+results = ev.search("glass breaking")
 
 for r in results:
     print(
@@ -107,6 +208,31 @@ for r in results:
     )
 ```
 
+### Moments, not chunks
+
+Indexing slices audio on a fixed grid, so one long relevant passage would otherwise come back as
+several near-identical hits that crowd out every other file. `search` folds consecutive hits from
+the same file into a single span:
+
+```python
+ev.search("rain on a roof", top_k=5)                     # moments (default)
+ev.search("rain on a roof", top_k=5, merge_spans=False)  # raw chunks
+ev.search("rain on a roof", top_k=5, max_per_file=1)     # one hit per file
+```
+
+A neighbouring chunk is only absorbed if it scores within 90% of the file's best hit, so a strong
+match cannot widen itself over the unrelated audio next to it. Each merged result records
+`merged_chunk_count` and `chunk_ids` in its metadata.
+
+### Finding similar audio
+
+```python
+results = ev.search_by_audio("./samples/door-slam-03.wav", top_k=10)
+```
+
+Takes a path or a mono waveform, skips the text tower entirely, and excludes the query file from its
+own results by default (`exclude_source=False` to keep it).
+
 ### Filtering results
 
 ```python
@@ -114,14 +240,39 @@ from echovector import EchoVector, SearchFilter
 
 ev = EchoVector()
 results = ev.search(
-    "conversation about CUDA kernels",
+    "glass breaking",
     top_k=10,
-    filters=SearchFilter(min_score=0.2, filepaths=["/audio/standup.wav"]),
+    filters=SearchFilter(min_score=0.2, filepaths=["/audio/foley-03.wav"]),
 )
 ```
 
 Filters run after retrieval, so EchoVector over-fetches candidates to still
 return a full page of `top_k` results.
+
+### Keeping the index current
+
+```python
+ev.is_stale("./library/street.wav")  # changed since it was indexed?
+ev.stale_files()                     # everything needing a re-index
+ev.prune()                           # drop files deleted from disk
+```
+
+Long indexing runs checkpoint the vector index periodically
+(`index(..., checkpoint_every_chunks=2000)`), so an interruption keeps its progress instead of
+leaving metadata rows with no matching vectors.
+
+### Large archives
+
+`flat` is exact and the right default for a personal library. For bigger collections, trade a little
+recall for speed:
+
+```python
+ev = EchoVector(index_type="hnsw", index_params={"ef_search": 128})
+```
+
+The structure is recorded in the manifest, so reopening a store uses what is actually on disk and
+warns if you asked for something else. Use `echovector eval` to measure the recall you are trading
+away rather than assuming it.
 
 ### Chunk length and the model's window
 
@@ -191,8 +342,8 @@ runtime if available:
 
 ```python
 !pip install transformers torch faiss-cpu librosa soundfile
-!echovector index /kaggle/input/<audio-dataset> --backend clap --device cuda --store-dir /kaggle/working/clap-index --recursive --reset
-!echovector search "people discussing pricing strategy" --backend clap --device cuda --store-dir /kaggle/working/clap-index --top-k 10
+!echovector index /kaggle/input/<audio-dataset> --backend clap --device cuda --store-dir /kaggle/working/clap-index --reset
+!echovector search "a dog barking in the distance" --backend clap --device cuda --store-dir /kaggle/working/clap-index --top-k 10
 ```
 
 If GPU is unavailable, replace `--device cuda` with `--device cpu`; it will be slower. Keep indexes
@@ -202,13 +353,13 @@ under `/kaggle/working` so they are writable during the notebook session.
 
 ```
 echovector/
-├── audio/        # Audio loading, chunking, streaming, metadata
-├── embeddings/   # Pluggable embedding backends (CLAP, Whisper, etc.)
-├── indexing/     # Vector index backends (FAISS, with pluggable design)
-├── search/       # Search engine, filtering, result hydration
+├── audio/        # Loading, chunking, clip extraction, metadata
+├── embeddings/   # Pluggable embedding backends (CLAP, wav2vec2, HuBERT, AST, local)
+├── indexing/     # FAISS index, SQLite metadata store, index manifest
+├── search/       # Result models, filtering, span merging
+├── evaluation/   # Retrieval metrics, golden sets, evaluation harness
 ├── cli/          # Typer-based CLI with Rich output
 ├── api/          # Optional FastAPI server
-├── evaluation/   # Vector similarity metrics
 └── utils/        # Logging helpers
 ```
 
@@ -216,9 +367,9 @@ echovector/
 
 ```
 <store-dir>/
-├── index.faiss       # the vectors (FAISS IndexIDMap2 over IndexFlatIP)
-├── metadata.sqlite   # chunk -> source file, timestamps, audio metadata
-└── manifest.json     # which backend, dimension, and chunking built the index
+├── index.faiss       # the vectors (FAISS IndexIDMap2 over flat / IVF / HNSW)
+├── metadata.sqlite   # chunk -> source file, timestamps, file signature
+└── manifest.json     # backend, dimension, chunking, and index structure
 ```
 
 The manifest is what makes a store safe to reopen. Vectors carry no record of
@@ -229,14 +380,17 @@ mismatch instead.
 
 ## Supported Embedding Backends
 
-| Backend | Status | Notes |
-|---------|--------|-------|
-| **CLAP** (default) | ✅ Implemented | Text+audio aligned; best for text→audio search |
-| `local` | ✅ Implemented | Deterministic acoustic-feature backend for offline smoke tests |
-| Whisper Encoder | 🚧 Stub | Raises `NotImplementedError`; not yet implemented |
-| wav2vec2 | 🚧 Stub | Raises `NotImplementedError`; not yet implemented |
-| HuBERT | 🚧 Stub | Raises `NotImplementedError`; not yet implemented |
-| Audio Spectrogram Transformer | 🚧 Stub | Raises `NotImplementedError`; not yet implemented |
+| Backend | Text → audio | Audio → audio | Notes |
+|---------|--------------|---------------|-------|
+| **CLAP** (default) | ✅ | ✅ | Text and audio share one space; the only backend that answers text queries |
+| `local` | ✅ | ✅ | Deterministic acoustic features. For offline smoke tests, not real search |
+| `wav2vec2` | ❌ | ✅ | Speech-pretrained encoder, mean-pooled |
+| `hubert` | ❌ | ✅ | Speech-pretrained encoder, mean-pooled |
+| `ast` | ❌ | ✅ | Audio Spectrogram Transformer, AudioSet-pretrained |
+
+The audio-only backends have no text tower, so a text query against them raises
+`TextSearchUnsupportedError` pointing you at `search_by_audio`. Use them with `similar` when you
+care about acoustic resemblance rather than description.
 
 ## Development
 
@@ -255,11 +409,6 @@ make coverage
 
 ## REST API
 
-The optional FastAPI server has **no authentication**: `POST /index` reads any
-filesystem path the request names and `POST /reset` deletes the index. Run it on
-localhost, or behind a proxy that authenticates those routes — never bound to a
-public interface as-is.
-
 ```bash
 pip install "echo_vector[api]"
 ```
@@ -272,6 +421,31 @@ from echovector.api.server import app, configure_engine
 configure_engine(EchoVector(store_dir="./ev-index", backend="local"))
 uvicorn.run(app, host="127.0.0.1", port=8000)
 ```
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/health` | Liveness; needs no configured engine |
+| `POST` | `/index` | Starts a background job, returns `202` with a job id |
+| `GET` | `/jobs` · `/jobs/{id}` | Job status, progress, and errors |
+| `POST` | `/search` | Text query against the index |
+| `GET` | `/stats` | Index statistics |
+| `POST` | `/reset` | Clears the index |
+
+Indexing runs on a background worker because a real corpus takes minutes to hours — a synchronous
+call would simply time out. One job runs at a time; a second request gets `409` naming the active
+job. Reads stay available throughout, since the worker takes the engine lock per file rather than
+for the whole run. Jobs live in memory and do not survive a restart.
+
+### Securing it
+
+Set `ECHOVECTOR_API_TOKEN` to require `Authorization: Bearer <token>` on `/index`, `/reset`, and the
+job routes. Leave it unset and those routes stay open, which is the local-use default.
+
+A token controls *who* can call those routes; it does not make them safe to expose publicly.
+`POST /index` still reads whatever filesystem paths the request names, so anyone holding the token
+can make the server read any file it can read, and `POST /reset` deletes the index irreversibly.
+Bind to localhost, or put it behind an authenticating proxy on a host whose filesystem you are
+willing to expose.
 
 ## License
 

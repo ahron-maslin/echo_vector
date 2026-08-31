@@ -307,3 +307,43 @@ class TestTransformersAudioBackends:
         backend.embed_audio_arrays([np.zeros(48000, dtype=np.float32)], sample_rate=48000)
 
         assert extractor.call_args.kwargs["sampling_rate"] == 16000
+
+
+def test_importing_echovector_does_not_load_torch() -> None:
+    """`import echovector` must stay cheap.
+
+    Backends are constructed lazily so that metadata-only work (`stats`, opening
+    a store) never pays for a model. Re-exporting anything from a module that
+    imports torch quietly undoes that and adds ~1.5s to every CLI invocation.
+    """
+    import subprocess
+    import sys
+
+    probe = "import sys; import echovector; print('torch' in sys.modules)"
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert result.stdout.strip() == "False"
+
+
+def test_text_search_error_is_importable_without_torch() -> None:
+    """Catching the error must not require the dependency that raises it."""
+    import subprocess
+    import sys
+
+    probe = (
+        "import sys; from echovector import TextSearchUnsupportedError; "
+        "print('torch' in sys.modules)"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert result.stdout.strip() == "False"

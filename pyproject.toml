@@ -108,7 +108,7 @@ ignore = [
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["D", "ANN", "S101", "ARG", "E501", "PT011"]
+"tests/**/*.py" = ["D", "ANN", "S101", "S603", "ARG", "E501", "PT011"]
 "echovector/api/server.py" = ["B008"]
 
 [tool.mypy]

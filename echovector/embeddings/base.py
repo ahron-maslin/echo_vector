@@ -6,6 +6,15 @@ import numpy as np
 import numpy.typing as npt
 
 
+class TextSearchUnsupportedError(NotImplementedError):
+    """Raised when a text query is issued against an audio-only backend.
+
+    Defined here rather than beside the backends that raise it so that catching
+    it costs nothing: this module imports only numpy, while the audio-only
+    backends pull in torch.
+    """
+
+
 class EmbeddingBackend(Protocol):
     """Protocol for embedding models."""
 
