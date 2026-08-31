@@ -12,6 +12,9 @@ python benchmarks/esc50.py --dataset ./ESC-50-master --backend local --per-class
 
 # Chunk length and span merging, on concatenated long-form recordings
 python benchmarks/esc50_longform.py --dataset ./ESC-50-master --chunk-seconds 2,3,4,5,6,7,8,10
+
+# Audio -> audio ("find more that sounds like this")
+python benchmarks/esc50_similar.py --dataset ./ESC-50-master --backend clap
 ```
 
 All figures below: CPU-only 8-core i7-1165G7, `torch 2.12`, `transformers 4.57`,
@@ -130,7 +133,9 @@ it — at 2s chunks a band of 0.0 scores recall@10 0.870 / nDCG@10 0.838 against
 
 Ranking metrics alone cannot settle this, because none of them ask whether a
 returned span actually *fits* the event it found. Adding temporal IoU against the
-annotated span does, and it changes the answer:
+annotated span does, and it changes the answer. (IoU was computed ad hoc for this
+analysis and, having proved decisive, is now a first-class metric: every
+`echovector eval` run reports "Span fit".)
 
 **2s chunks** — chunks shorter than the 5s events
 
@@ -170,6 +175,28 @@ regime it actively hurts. Second, the right long-term fix is probably not a
 constant at all but a band derived from the ratio of chunk length to observed
 event length.
 
+## ESC-50 — audio → audio retrieval
+
+`benchmarks/esc50_similar.py` uses each clip in turn as the query and counts a
+result correct when it comes from the same class. The query clip is excluded, so
+9 of 500 remain correct and chance is **0.018**.
+
+| Metric | `similar` (audio→audio) | text→audio | chance |
+|--------|------------------------|------------|--------|
+| precision@1 | **0.950** | 0.900 | 0.018 |
+| precision@5 | **0.912** | 0.904 | 0.018 |
+| precision@10 | 0.765 | 0.800 | 0.018 |
+| MRR | **0.966** | 0.937 | — |
+
+**Similarity search is the stronger capability.** It beats text search on
+precision@1 (0.950 vs 0.900) and MRR (0.966 vs 0.937), which makes sense: it
+compares audio to audio and never has to cross the modality gap that text search
+depends on. It is also the only mode available to the `wav2vec2`, `hubert`, and
+`ast` backends, which have no text tower at all.
+
+The cost is query latency: **614 ms** against 67 ms for a text query, because the
+query clip must be decoded and embedded rather than just a short string.
+
 ## What this does and does not establish
 
 **Does:** EchoVector retrieves environmental and non-speech audio from a plain
@@ -187,12 +214,7 @@ single-source; a real library of long, noisy, overlapping recordings is harder.
   clips, where event boundaries are uniform and known. A corpus of genuinely
   continuous recordings (Clotho, AudioCaps) would confirm the shape without the
   synthetic regularity.
-- **Temporal IoU as a first-class metric.** It was computed ad hoc for the
-  merging analysis above and proved decisive there — ranking metrics alone said
-  the opposite of what it said. It belongs in `echovector.evaluation` so every
-  run reports it.
 - **An adaptive merge band.** The optimal value depends on chunk length relative
   to event length, which a constant cannot express.
 - **Approximate indexes.** `ivf` and `hnsw` recall against the `flat` baseline at
   a corpus size where they matter.
-- **Audio-to-audio.** `search_by_audio` has no benchmark at all yet.

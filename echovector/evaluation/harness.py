@@ -52,6 +52,9 @@ class QueryEvaluation:
             Recall, nDCG, and average precision count these rather than
             ``relevance``, so duplicate hits on one span cannot push a normalised
             metric above 1.0.
+        mean_iou: Average temporal IoU between each returned result and its
+            best-matching annotated span. Measures how tightly results bound the
+            events they found, which the ranking metrics do not ask about.
         latency_seconds: Wall-clock time spent inside the search callable.
         metrics: Metric name and cut-off (``"recall@5"``) mapped to its score.
     """
@@ -62,6 +65,7 @@ class QueryEvaluation:
     num_retrieved: int
     relevance: tuple[bool, ...]
     novel_relevance: tuple[bool, ...]
+    mean_iou: float
     latency_seconds: float
     metrics: dict[str, float] = field(default_factory=dict)
 
@@ -101,6 +105,20 @@ class EvaluationReport:
     aggregates: dict[str, float]
     latency: LatencyStats
     name: str | None = None
+
+    def span_iou(self) -> float:
+        """Return the mean temporal IoU of returned results with annotated spans.
+
+        Ranking metrics say whether the right moment was found; this says how
+        tightly the returned span bounds it. A result that covers the event but
+        runs far too long scores fully on the former and poorly here.
+
+        Returns:
+            Mean IoU in [0.0, 1.0], or 0.0 when nothing was evaluated.
+        """
+        if not self.queries:
+            return 0.0
+        return sum(evaluation.mean_iou for evaluation in self.queries) / len(self.queries)
 
     def metric(self, name: str, k: int) -> float:
         """Look up one aggregate score.
@@ -166,6 +184,7 @@ class EvaluationReport:
         lines.append("")
         lines.extend(self._aggregate_rows())
         lines.append("")
+        lines.append(f"Span fit (mean IoU with the annotated span): {self.span_iou():.3f}")
         lines.append(
             "Latency: mean "
             f"{self.latency.mean_seconds * 1000:.1f} ms | "
@@ -377,6 +396,9 @@ def _aggregate(evaluations: Sequence[QueryEvaluation], ks: Sequence[int]) -> dic
     aggregates: dict[str, float] = {}
     if not evaluations:
         return aggregates
+    # Not per-cut-off: IoU describes the shape of the results returned, not how
+    # far down the ranking you look.
+    aggregates["iou"] = sum(e.mean_iou for e in evaluations) / len(evaluations)
     for name in _PER_QUERY_METRICS:
         for k in ks:
             key = f"{name}@{k}"
@@ -416,6 +438,7 @@ def evaluate_query(
     # A search callable that ignores top_k must not earn credit past max(ks).
     results = results[:max_k]
     relevance, novel_relevance = _label_results(results, golden_query.relevant, judge)
+    ious = [judge.best_iou(result, golden_query.relevant) for result in results]
     return QueryEvaluation(
         query=golden_query.query,
         label=golden_query.label,
@@ -423,6 +446,7 @@ def evaluate_query(
         num_retrieved=len(results),
         relevance=relevance,
         novel_relevance=novel_relevance,
+        mean_iou=sum(ious) / len(ious) if ious else 0.0,
         latency_seconds=latency,
         metrics=_query_metrics(relevance, novel_relevance, len(golden_query.relevant), cutoffs),
     )

@@ -727,3 +727,111 @@ def test_ranking_metrics_reward_covering_more_distinct_spans():
     assert distinct_report.metric("map", 3) == 1.0
     assert duplicated_report.metric("ndcg", 3) < distinct_report.metric("ndcg", 3)
     assert duplicated_report.metric("map", 3) < distinct_report.metric("map", 3)
+
+
+# ---------------------------------------------------------------------------
+# Span fit (temporal IoU)
+# ---------------------------------------------------------------------------
+
+
+class TestTemporalIoU:
+    """IoU asks how tightly a result bounds the event, not just whether it found it."""
+
+    def _span(self, start: float, end: float, filepath: str = "/a.wav") -> RelevantSpan:
+        return RelevantSpan(filepath=filepath, start=start, end=end)
+
+    def _result(self, start: float, end: float, filepath: str = "/a.wav") -> SearchResult:
+        return SearchResult(
+            filepath=filepath,
+            timestamp_range=TimestampRange(start=start, end=end),
+            score=1.0,
+        )
+
+    def test_exact_match_scores_one(self) -> None:
+        judge = RelevanceJudge()
+        assert judge.temporal_iou(self._result(10.0, 20.0), self._span(10.0, 20.0)) == 1.0
+
+    def test_disjoint_scores_zero(self) -> None:
+        judge = RelevanceJudge()
+        assert judge.temporal_iou(self._result(0.0, 5.0), self._span(10.0, 20.0)) == 0.0
+
+    def test_different_file_scores_zero(self) -> None:
+        judge = RelevanceJudge()
+        result = self._result(10.0, 20.0, filepath="/other.wav")
+        assert judge.temporal_iou(result, self._span(10.0, 20.0)) == 0.0
+
+    def test_an_overlong_span_is_penalised_though_fully_relevant(self) -> None:
+        """The case ranking metrics cannot see: right event, sloppy bounds."""
+        judge = RelevanceJudge()
+        span = self._span(10.0, 20.0)
+        tight = self._result(10.0, 20.0)
+        loose = self._result(0.0, 60.0)
+
+        # Both fully cover the event, so both are relevant...
+        assert judge.matches(tight, span) is True
+        assert judge.matches(loose, span) is True
+        # ...but only IoU distinguishes them.
+        assert judge.temporal_iou(tight, span) == 1.0
+        assert judge.temporal_iou(loose, span) == pytest.approx(10.0 / 60.0)
+
+    def test_partial_overlap(self) -> None:
+        judge = RelevanceJudge()
+        # overlap 5s (10-15), union 15s (5-20)
+        iou = judge.temporal_iou(self._result(5.0, 15.0), self._span(10.0, 20.0))
+        assert iou == pytest.approx(5.0 / 15.0)
+
+    def test_best_iou_picks_the_closest_span(self) -> None:
+        judge = RelevanceJudge()
+        spans = [self._span(0.0, 5.0), self._span(10.0, 20.0), self._span(50.0, 55.0)]
+        assert judge.best_iou(self._result(10.0, 20.0), spans) == 1.0
+
+    def test_best_iou_with_no_spans_is_zero(self) -> None:
+        assert RelevanceJudge().best_iou(self._result(0.0, 1.0), []) == 0.0
+
+    def test_report_exposes_span_fit(self) -> None:
+        golden = parse_golden_set(
+            {
+                "queries": [
+                    {
+                        "query": "q",
+                        "relevant": [{"filepath": "/a.wav", "start": 10.0, "end": 20.0}],
+                    }
+                ]
+            }
+        )
+
+        def tight(_query: str, _k: int) -> list[SearchResult]:
+            return [self._result(10.0, 20.0)]
+
+        def loose(_query: str, _k: int) -> list[SearchResult]:
+            return [self._result(0.0, 60.0)]
+
+        tight_report = evaluate(tight, golden, ks=(1,))
+        loose_report = evaluate(loose, golden, ks=(1,))
+
+        # Identical on every ranking metric...
+        assert tight_report.metric("recall", 1) == loose_report.metric("recall", 1) == 1.0
+        # ...and separated only by span fit.
+        assert tight_report.span_iou() == 1.0
+        assert loose_report.span_iou() == pytest.approx(10.0 / 60.0)
+        assert "Span fit" in tight_report.format_table()
+        assert tight_report.to_dict()["aggregates"]["iou"] == 1.0
+
+    def test_span_iou_of_an_empty_report_is_zero(self) -> None:
+        # parse_golden_set rejects an empty set, so build one directly.
+        report = evaluate(lambda _q, _k: [], GoldenSet(queries=()), ks=(1,))
+        assert report.span_iou() == 0.0
+
+    def test_results_that_find_nothing_score_zero_fit(self) -> None:
+        golden = parse_golden_set(
+            {
+                "queries": [
+                    {
+                        "query": "q",
+                        "relevant": [{"filepath": "/a.wav", "start": 10.0, "end": 20.0}],
+                    }
+                ]
+            }
+        )
+        report = evaluate(lambda _q, _k: [self._result(90.0, 95.0)], golden, ks=(1,))
+        assert report.span_iou() == 0.0

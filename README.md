@@ -27,12 +27,14 @@ natural-language queries, 10 correct clips each, so chance is 0.020:
 
 | | precision@1 | recall@10 | MRR | nDCG@10 |
 |---|---|---|---|---|
-| **CLAP** | **0.900** | **0.800** | **0.937** | **0.835** |
+| **text → audio** (CLAP) | **0.900** | 0.800 | 0.937 | 0.835 |
+| **audio → audio** (`similar`) | **0.950** | — | 0.966 | — |
 | chance | 0.020 | 0.020 | — | — |
 
-For 45 of 50 queries the top result was already correct, and every query found a correct clip in its
-top 10. Reproduce it yourself with `python benchmarks/esc50.py`; full methodology, per-class results,
-and known weaknesses are in [benchmarks/RESULTS.md](benchmarks/RESULTS.md).
+For 45 of 50 text queries the top result was already correct, and every query found a correct clip
+in its top 10. Searching *with a clip* instead of a sentence does better still. Reproduce it with
+`python benchmarks/esc50.py`; full methodology, per-class results, and known weaknesses are in
+[benchmarks/RESULTS.md](benchmarks/RESULTS.md).
 
 ### What it is good at
 
@@ -186,11 +188,14 @@ mrr          1.000    1.000    1.000
 ndcg         1.000    1.000    1.000
 map          1.000    1.000    1.000
 
+Span fit (mean IoU with the annotated span): 0.519
 Latency: mean 7.7 ms | p50 5.6 ms | p95 16.6 ms | 130.5 queries/sec
 ```
 
 A result counts as relevant when it overlaps an annotated span, so chunk boundaries do not have to
-line up with your annotations. Use `eval` to compare backends, chunk lengths, or index types against
+line up with your annotations. **Span fit** is separate and worth watching: the ranking metrics say
+whether the right moment was found, while span fit says how tightly the result bounds it — a result
+that covers the event but runs three times too long scores perfectly on the former and poorly here. Use `eval` to compare backends, chunk lengths, or index types against
 each other instead of by feel.
 
 > The figures above come from a synthetic tone corpus used to exercise the harness. For real

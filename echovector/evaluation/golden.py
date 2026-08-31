@@ -392,6 +392,47 @@ class RelevanceJudge:
         }
         return min(overlap / denominators[self.mode], 1.0)
 
+    def temporal_iou(self, result: SearchResult, span: RelevantSpan) -> float:
+        """Return the intersection-over-union of a result and a span in time.
+
+        Independent of ``mode``, because this answers a different question than
+        relevance does: not "does this result find the event" but "how tightly
+        does it fit it". A span that covers the event but runs three times too
+        long is fully relevant and poorly bounded, and only IoU says so.
+
+        Args:
+            result: A search result.
+            span: An annotated relevant span.
+
+        Returns:
+            IoU in [0.0, 1.0]; 0.0 when the files differ or the ranges are disjoint.
+        """
+        if _normalize_filepath(result.filepath, basename_only=self.match_basename) != (
+            _normalize_filepath(span.filepath, basename_only=self.match_basename)
+        ):
+            return 0.0
+
+        start = result.timestamp_range.start
+        end = result.timestamp_range.end
+        overlap = min(end, span.end) - max(start, span.start)
+        if overlap <= 0:
+            return 0.0
+
+        union = max(end, span.end) - min(start, span.start)
+        return min(overlap / union, 1.0) if union > 0 else 1.0
+
+    def best_iou(self, result: SearchResult, spans: Sequence[RelevantSpan]) -> float:
+        """Return the best temporal IoU between a result and any annotated span.
+
+        Args:
+            result: A search result.
+            spans: The query's annotated spans.
+
+        Returns:
+            The highest IoU achieved, or 0.0 when nothing overlaps.
+        """
+        return max((self.temporal_iou(result, span) for span in spans), default=0.0)
+
     def matches(self, result: SearchResult, span: RelevantSpan) -> bool:
         """Judge a single result against a single span.
 
