@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from echovector.embeddings.ast_model import ASTBackend
 from echovector.embeddings.base import (
     WaveformEmbeddingBackend,
     backend_fingerprint,
@@ -20,9 +19,13 @@ from echovector.embeddings.factory import (
     backend_class_for,
     get_embedding_model,
 )
-from echovector.embeddings.hubert import HubertBackend
 from echovector.embeddings.local import LocalFeatureBackend
-from echovector.embeddings.wav2vec2 import Wav2Vec2Backend
+from echovector.embeddings.transformers_audio import (
+    ASTBackend,
+    HubertBackend,
+    TextSearchUnsupportedError,
+    Wav2Vec2Backend,
+)
 
 
 def _mock_clap(mock_processor_class, mock_model_class, projection_dim=512):
@@ -184,18 +187,8 @@ class TestBackendIntrospection:
 
         assert backend_fingerprint(Anonymous()) == "Anonymous"
 
-    def test_stub_backends_are_not_waveform_backends(self):
-        assert not isinstance(HubertBackend(), WaveformEmbeddingBackend)
-
 
 class TestEmbeddingFactory(unittest.TestCase):
-    def test_create_stub_backend(self):
-        """Test instantiating a stub backend via factory."""
-        backend = get_embedding_model("whisper")
-        assert backend.embedding_dim == 512
-        with pytest.raises(NotImplementedError):
-            backend.embed_text(["hello"])
-
     def test_invalid_backend(self):
         """Test factory with invalid backend name."""
         with pytest.raises(ValueError, match="Unknown embedding backend"):
@@ -203,8 +196,7 @@ class TestEmbeddingFactory(unittest.TestCase):
 
     def test_case_insensitivity(self):
         """Test that factory accepts names ignoring case."""
-        backend = get_embedding_model("WHISPER")
-        assert backend.__class__.__name__ == "WhisperBackend"
+        assert backend_class_for("LOCAL") is LocalFeatureBackend
 
     def test_resolve_returns_class_without_instantiating(self):
         """The CLI inspects constructors before paying for a model load."""
@@ -222,15 +214,96 @@ class TestEmbeddingFactory(unittest.TestCase):
             EmbeddingFactory._registry.pop("custom-test", None)
 
 
-@pytest.mark.parametrize(
-    ("backend_cls", "expected_dim"),
-    [(HubertBackend, 768), (Wav2Vec2Backend, 768), (ASTBackend, 768)],
-)
-def test_stub_backends_raise_not_implemented(backend_cls, expected_dim):
-    """Stub backends should report their dimension but refuse to embed."""
-    backend = backend_cls()
-    assert backend.embedding_dim == expected_dim
-    with pytest.raises(NotImplementedError):
-        backend.embed_audio(["dummy.wav"])
-    with pytest.raises(NotImplementedError):
-        backend.embed_text(["hello"])
+def _mock_transformers_audio(mock_auto_model, mock_auto_fe, hidden_size=768, frames=4, batch=2):
+    """Wire AutoModel/AutoFeatureExtractor so no weights are downloaded."""
+    import torch
+
+    extractor = MagicMock()
+    extractor.max_length = 1024
+    mock_auto_fe.from_pretrained.return_value = extractor
+    extractor.return_value = {
+        "input_values": torch.zeros(batch, 16000),
+        "attention_mask": torch.ones(batch, 16000),
+    }
+
+    model = MagicMock()
+    model.config.hidden_size = hidden_size
+    mock_auto_model.from_pretrained.return_value = model
+    output = MagicMock()
+    output.last_hidden_state = torch.ones(batch, frames, hidden_size)
+    model.return_value = output
+    return extractor, model
+
+
+class TestTransformersAudioBackends:
+    """Audio-only encoders, used for `find more that sounds like this`."""
+
+    @patch("transformers.AutoModel")
+    @patch("transformers.AutoFeatureExtractor")
+    def test_embeds_waveforms_to_unit_vectors(self, mock_auto_fe, mock_auto_model):
+        _mock_transformers_audio(mock_auto_model, mock_auto_fe)
+
+        backend = Wav2Vec2Backend(device="cpu")
+        vectors = backend.embed_audio_arrays(
+            [np.zeros(16000, dtype=np.float32), np.zeros(8000, dtype=np.float32)],
+            sample_rate=16000,
+        )
+
+        assert vectors.shape == (2, 768)
+        np.testing.assert_allclose(np.linalg.norm(vectors, axis=1), 1.0, atol=1e-5)
+
+    @patch("transformers.AutoModel")
+    @patch("transformers.AutoFeatureExtractor")
+    def test_text_queries_are_refused_with_guidance(self, mock_auto_fe, mock_auto_model):
+        """An audio-only backend must say what to use instead, not just fail."""
+        _mock_transformers_audio(mock_auto_model, mock_auto_fe)
+
+        backend = Wav2Vec2Backend(device="cpu")
+
+        with pytest.raises(TextSearchUnsupportedError, match="search_by_audio"):
+            backend.embed_text(["anything"])
+        assert issubclass(TextSearchUnsupportedError, NotImplementedError)
+
+    @patch("transformers.AutoModel")
+    @patch("transformers.AutoFeatureExtractor")
+    def test_empty_batch_returns_correct_shape(self, mock_auto_fe, mock_auto_model):
+        _mock_transformers_audio(mock_auto_model, mock_auto_fe)
+        backend = HubertBackend(device="cpu")
+
+        assert backend.embed_audio([]).shape == (0, 768)
+        assert backend.embed_audio_arrays([], sample_rate=16000).shape == (0, 768)
+
+    @patch("transformers.AutoModel")
+    @patch("transformers.AutoFeatureExtractor")
+    def test_fingerprints_distinguish_families_and_weights(self, mock_auto_fe, mock_auto_model):
+        _mock_transformers_audio(mock_auto_model, mock_auto_fe)
+
+        assert Wav2Vec2Backend(device="cpu").fingerprint == "wav2vec2:facebook/wav2vec2-base"
+        assert HubertBackend(device="cpu").fingerprint == "hubert:facebook/hubert-base-ls960"
+        custom = Wav2Vec2Backend(model_name="facebook/wav2vec2-large", device="cpu")
+        assert custom.fingerprint == "wav2vec2:facebook/wav2vec2-large"
+
+    @patch("transformers.AutoModel")
+    @patch("transformers.AutoFeatureExtractor")
+    def test_declare_waveform_protocol(self, mock_auto_fe, mock_auto_model):
+        _mock_transformers_audio(mock_auto_model, mock_auto_fe)
+        assert isinstance(Wav2Vec2Backend(device="cpu"), WaveformEmbeddingBackend)
+
+    @patch("transformers.AutoModel")
+    @patch("transformers.AutoFeatureExtractor")
+    def test_ast_declares_its_fixed_window(self, mock_auto_fe, mock_auto_model):
+        """AST crops to a fixed spectrogram length, so the window must be declared."""
+        _mock_transformers_audio(mock_auto_model, mock_auto_fe)
+
+        assert max_audio_seconds(ASTBackend(device="cpu")) == 10.24
+        assert max_audio_seconds(Wav2Vec2Backend(device="cpu")) is None
+
+    @patch("transformers.AutoModel")
+    @patch("transformers.AutoFeatureExtractor")
+    def test_resamples_to_the_encoder_rate(self, mock_auto_fe, mock_auto_model):
+        extractor, _ = _mock_transformers_audio(mock_auto_model, mock_auto_fe, batch=1)
+
+        backend = Wav2Vec2Backend(device="cpu")
+        backend.embed_audio_arrays([np.zeros(48000, dtype=np.float32)], sample_rate=48000)
+
+        assert extractor.call_args.kwargs["sampling_rate"] == 16000

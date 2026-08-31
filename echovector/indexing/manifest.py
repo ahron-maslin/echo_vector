@@ -15,6 +15,10 @@ MANIFEST_FILENAME = "manifest.json"
 #: Bumped when the on-disk layout changes in a way older readers cannot handle.
 FORMAT_VERSION = 1
 
+#: What a manifest without an `index_type` describes. Every store written
+#: before the field existed used an exhaustive flat index.
+DEFAULT_INDEX_TYPE = "flat"
+
 
 class IndexMismatchError(ValueError):
     """Raised when an index was built with settings incompatible with the current ones."""
@@ -31,6 +35,9 @@ class IndexManifest:
         chunk_seconds: Chunk length used when the audio was sliced.
         overlap_seconds: Overlap between adjacent chunks.
         sample_rate: Sample rate audio was resampled to before embedding.
+        index_type: Faiss structure the vectors live in ("flat", "ivf",
+            "hnsw"). Defaults to "flat" for manifests written before the field
+            existed, which is what those stores actually contain.
     """
 
     format_version: int
@@ -39,6 +46,7 @@ class IndexManifest:
     chunk_seconds: float
     overlap_seconds: float
     sample_rate: int
+    index_type: str = DEFAULT_INDEX_TYPE
 
     @classmethod
     def path_for(cls, store_dir: str | Path) -> Path:
@@ -55,6 +63,11 @@ class IndexManifest:
     @classmethod
     def read(cls, store_dir: str | Path) -> "IndexManifest | None":
         """Load the manifest for a store directory.
+
+        `index_type` is read leniently: it was added after `FORMAT_VERSION` 1
+        shipped, and bumping the version to introduce it would have invalidated
+        every existing store over a field that does not affect how vectors are
+        interpreted. A manifest without it describes a flat index.
 
         Args:
             store_dir: The index store directory.
@@ -90,6 +103,7 @@ class IndexManifest:
                 chunk_seconds=float(data["chunk_seconds"]),
                 overlap_seconds=float(data["overlap_seconds"]),
                 sample_rate=int(data["sample_rate"]),
+                index_type=str(data.get("index_type", DEFAULT_INDEX_TYPE)),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise IndexMismatchError(f"Index manifest at {path} is missing fields: {exc}") from exc
@@ -111,6 +125,15 @@ class IndexManifest:
         audio is sliced but leave existing vectors searchable. Only the
         embedding space itself has to match.
 
+        `index_type` is not fatal either, and for a stronger reason: it records
+        the search structure, not the meaning of the vectors. The same
+        embeddings in a flat, IVF, or HNSW index answer the same query with the
+        same scores, differing only in recall and speed, so a mismatch cannot
+        produce the confidently-wrong results this check exists to prevent. The
+        index file on disk is authoritative about its own structure anyway; the
+        manifest field is a record, and a requested change is reported through
+        :meth:`index_type_difference` rather than refused here.
+
         Args:
             self: Settings recorded when the index was built.
             other: Settings requested for the current session.
@@ -131,6 +154,26 @@ class IndexManifest:
                 f"requested '{other.backend}'. Scores across different models are meaningless. "
                 f"Use a different --store-dir, or re-index with --reset."
             )
+
+    def index_type_difference(self, other: "IndexManifest") -> str | None:
+        """Describe a requested index structure the stored index does not use.
+
+        Switching structures needs a re-index; opening an existing store with a
+        different `index_type` silently keeps the structure already on disk, so
+        callers should surface this rather than let the request vanish.
+
+        Args:
+            other: Settings requested for the current session.
+
+        Returns:
+            A human-readable description, or None when the two agree.
+        """
+        if self.index_type == other.index_type:
+            return None
+        return (
+            f"index_type (built as '{self.index_type}', now requested '{other.index_type}'); "
+            f"the existing index keeps its '{self.index_type}' structure until it is re-indexed"
+        )
 
     def chunking_differences(self, other: "IndexManifest") -> list[str]:
         """Describe chunking settings that differ from another manifest.

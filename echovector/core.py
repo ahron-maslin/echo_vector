@@ -3,6 +3,7 @@
 import warnings
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
+from math import isclose
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, cast
@@ -21,15 +22,31 @@ from echovector.embeddings.base import (
 )
 from echovector.embeddings.factory import get_embedding_model
 from echovector.indexing.faiss_index import FaissIndex
-from echovector.indexing.manifest import FORMAT_VERSION, IndexManifest, IndexMismatchError
+from echovector.indexing.manifest import (
+    DEFAULT_INDEX_TYPE,
+    FORMAT_VERSION,
+    IndexManifest,
+    IndexMismatchError,
+)
 from echovector.search.filters import SearchFilter
 from echovector.search.results import SearchResult, TimestampRange
+from echovector.search.spans import limit_per_file, merge_adjacent_spans
 
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".m4a", ".ogg", ".aiff", ".aif"}
 
 #: How many extra candidates to pull from the index when filtering, since
 #: filters are applied after retrieval and can discard most of a page.
 FILTER_OVERFETCH = 5
+
+#: A neighbouring chunk joins a span only if it scores at least this fraction of
+#: the file's best hit. Adjacency alone would let a strong hit absorb the
+#: unrelated audio next to it and report a span the user did not ask for.
+SPAN_MERGE_RELATIVE_SCORE = 0.9
+
+#: Slack when comparing a file's stored mtime with the one on disk. Filesystems
+#: and archive tools round timestamps differently, so an exact match would
+#: report unchanged files as stale.
+MTIME_TOLERANCE_SECONDS = 1e-6
 
 __all__ = ["AUDIO_EXTENSIONS", "EchoVector", "IndexMismatchError"]
 
@@ -45,6 +62,8 @@ class EchoVector:
         chunk_seconds: float = 10.0,
         overlap_seconds: float = 1.0,
         sample_rate: int = 48_000,
+        index_type: str = DEFAULT_INDEX_TYPE,
+        index_params: dict[str, Any] | None = None,
         **backend_kwargs: Any,
     ) -> None:
         """Initialize EchoVector.
@@ -56,6 +75,10 @@ class EchoVector:
             chunk_seconds: Length of each embedded audio chunk.
             overlap_seconds: Overlap between adjacent chunks.
             sample_rate: Sample rate audio is resampled to before chunking.
+            index_type: Vector index structure: "flat" (exact, the default),
+                or "ivf"/"hnsw" for approximate search over a large archive.
+            index_params: Tuning knobs for the chosen structure, e.g.
+                {"nlist": 256} for IVF or {"ef_search": 128} for HNSW.
             **backend_kwargs: Forwarded to the backend constructor.
 
         Raises:
@@ -79,6 +102,8 @@ class EchoVector:
         self.chunk_seconds = chunk_seconds
         self.overlap_seconds = overlap_seconds
         self.sample_rate = sample_rate
+        self.index_type = index_type
+        self.index_params = dict(index_params or {})
         self.audio_processor = FileAudioProcessor(target_sample_rate=sample_rate, mono=True)
 
         self._backend_spec = backend
@@ -87,6 +112,20 @@ class EchoVector:
 
         self._stored_manifest = IndexManifest.read(self.store_dir)
 
+        # An existing store's structure is whatever is on disk. Adopt it rather
+        # than pretending the request took effect, but say so: switching
+        # structures changes recall and speed and needs a re-index.
+        if self._stored_manifest is not None:
+            if self._stored_manifest.index_type != index_type:
+                warnings.warn(
+                    f"Store at {self.store_dir} was built as "
+                    f"'{self._stored_manifest.index_type}', not '{index_type}'. Using the "
+                    f"structure on disk; re-index with reset=True to change it.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            self.index_type = self._stored_manifest.index_type
+
         # A manifest records the embedding width, so a store can be opened — and
         # `stats()` answered — without paying to construct the model.
         dimension = (
@@ -94,7 +133,12 @@ class EchoVector:
             if self._stored_manifest is not None
             else self.embedder.embedding_dim
         )
-        self.index_backend = FaissIndex(dimension=dimension, db_path=str(self.db_path))
+        self.index_backend = FaissIndex(
+            dimension=dimension,
+            db_path=str(self.db_path),
+            index_type=self.index_type,
+            **self.index_params,
+        )
 
         if self.index_path.exists():
             self.index_backend.load(str(self.index_path))
@@ -140,6 +184,7 @@ class EchoVector:
             chunk_seconds=self.chunk_seconds,
             overlap_seconds=self.overlap_seconds,
             sample_rate=self.sample_rate,
+            index_type=self.index_type,
         )
 
     def _assert_backend_matches_index(self, embedder: EmbeddingBackend) -> None:
@@ -188,6 +233,7 @@ class EchoVector:
         batch_size: int = 16,
         force: bool = False,
         on_file_indexed: Callable[[int, int, Path], None] | None = None,
+        checkpoint_every_chunks: int = 2_000,
     ) -> int:
         """Index audio chunks from paths or directories.
 
@@ -200,6 +246,9 @@ class EchoVector:
             on_file_indexed: Optional callback invoked after each file is
                 processed, with (files_done, total_files, file_path). Useful
                 for reporting progress.
+            checkpoint_every_chunks: Save the vector index to disk after roughly
+                this many chunks, so an interrupted run keeps its progress.
+                Set to 0 to save only at the end.
 
         Returns:
             Number of new chunks added to the index.
@@ -222,41 +271,65 @@ class EchoVector:
         self._assert_chunk_fits_backend(embedder)
         self._warn_on_chunking_drift(embedder)
 
-        if force:
-            for file_path in files:
-                int_ids = self.index_backend.store.delete_by_filepath(str(file_path))
-                if int_ids:
-                    self.index_backend.remove_int_ids(int_ids)
-        else:
-            files = [f for f in files if not self.index_backend.store.has_filepath(str(f))]
+        if not force:
+            # An unchanged file is skipped, but one edited or replaced since it
+            # was indexed must be re-read: matching on path alone would leave
+            # the index describing audio that no longer exists.
+            files = [f for f in files if self._has_changed(f)]
             if not files:
                 return 0
 
+        for file_path in files:
+            int_ids = self.index_backend.store.delete_by_filepath(str(file_path))
+            if int_ids:
+                self.index_backend.remove_int_ids(int_ids)
+
+        # Written before the loop so an interrupted run still leaves a store that
+        # describes itself, rather than vectors with no recorded provenance.
+        self._current_manifest(embedder).write(self.store_dir)
+        self._stored_manifest = IndexManifest.read(self.store_dir)
+
         indexed_chunks = 0
+        since_checkpoint = 0
         with self._chunk_batcher(embedder, batch_size) as batcher:
             for file_number, file_path in enumerate(files, start=1):
                 audio = self.audio_processor.load_audio(str(file_path))
                 # Metadata describes the file, not the chunk, so read it once per
                 # file rather than reopening the file for every chunk.
                 file_metadata = extract_metadata(str(file_path))
+                file_mtime = file_path.stat().st_mtime
 
                 for chunk_number, start_s, end_s, chunk_audio in self._iter_chunks(audio):
                     batcher.add(
                         chunk_audio,
                         f"{file_path}#{start_s:.3f}-{end_s:.3f}",
                         self._metadata_for_chunk(
-                            file_path, file_metadata, chunk_number, start_s, end_s
+                            file_path, file_metadata, chunk_number, start_s, end_s, file_mtime
                         ),
                     )
                     indexed_chunks += 1
+                    since_checkpoint += 1
 
                 if on_file_indexed is not None:
                     on_file_indexed(file_number, len(files), file_path)
 
-        self._current_manifest(embedder).write(self.store_dir)
-        self._stored_manifest = IndexManifest.read(self.store_dir)
+                if checkpoint_every_chunks > 0 and since_checkpoint >= checkpoint_every_chunks:
+                    self._checkpoint(batcher)
+                    since_checkpoint = 0
+
         self.index_backend.save(str(self.index_path))
         return indexed_chunks
+
+    def _checkpoint(self, batcher: "_ChunkBatcher") -> None:
+        """Persist progress so far.
+
+        The store commits per batch but the vector index only reaches disk on
+        save, so an interrupted long run would otherwise leave metadata rows
+        with no matching vectors. Flushing before saving is what keeps the two
+        halves consistent at the checkpoint.
+        """
+        batcher.flush()
+        self.index_backend.save(str(self.index_path))
 
     # ------------------------------------------------------------------
     # Search
@@ -267,6 +340,9 @@ class EchoVector:
         query: str,
         top_k: int = 5,
         filters: SearchFilter | None = None,
+        merge_spans: bool = True,
+        max_gap_seconds: float = 0.0,
+        max_per_file: int | None = None,
     ) -> list[SearchResult]:
         """Search indexed audio with a text query.
 
@@ -274,9 +350,17 @@ class EchoVector:
             query: Natural-language description of the audio to find.
             top_k: Maximum number of results to return.
             filters: Optional post-retrieval filters on score, filepath, or metadata.
+            merge_spans: Fold consecutive hits from one file into a single
+                moment. A 40-second passage is otherwise returned as four or
+                five near-identical chunks that crowd out every other file.
+                Set False for the raw chunk-level results.
+            max_gap_seconds: When merging, the largest silence between two hits
+                that still counts as one moment.
+            max_per_file: Optionally cap how many results any one file may
+                contribute, so a single dominant recording cannot fill the page.
 
         Returns:
-            Matching chunks ordered by descending similarity.
+            Matching moments ordered by descending similarity.
 
         Raises:
             ValueError: If top_k is negative.
@@ -286,11 +370,106 @@ class EchoVector:
         if top_k == 0:
             return []
 
-        # Filters run after retrieval, so ask the index for extra candidates to
-        # avoid returning fewer than top_k results that would have qualified.
-        fetch_k = top_k * FILTER_OVERFETCH if filters is not None else top_k
+        query_embedding = self.embedder.embed_text([query])
+        return self._search_embedding(
+            query_embedding,
+            top_k,
+            filters,
+            merge_spans=merge_spans,
+            max_gap_seconds=max_gap_seconds,
+            max_per_file=max_per_file,
+        )
 
-        query_embedding = self._normalize_rows(self.embedder.embed_text([query]))
+    def search_by_audio(
+        self,
+        audio: str | Path | npt.NDArray[np.float32],
+        top_k: int = 5,
+        sample_rate: int | None = None,
+        filters: SearchFilter | None = None,
+        exclude_source: bool = True,
+    ) -> list[SearchResult]:
+        """Find indexed audio that sounds like the given clip.
+
+        Unlike text search this never touches the text tower, so it works with
+        audio-only backends (wav2vec2, HuBERT, AST) that have no aligned text
+        embedding at all.
+
+        Args:
+            audio: Path to an audio file, or a mono float32 waveform.
+            top_k: Maximum number of results to return.
+            sample_rate: Rate of `audio` when passing a waveform. Defaults to
+                the engine's own sample rate.
+            filters: Optional post-retrieval filters.
+            exclude_source: Drop hits from the query file itself, which would
+                otherwise take every top slot when the query is already indexed.
+
+        Returns:
+            Matching chunks ordered by descending similarity.
+
+        Raises:
+            ValueError: If top_k is negative, or a waveform is not 1-D.
+        """
+        if top_k < 0:
+            raise ValueError("top_k must be non-negative.")
+        if top_k == 0:
+            return []
+
+        source_path: Path | None = None
+        if isinstance(audio, (str, Path)):
+            source_path = self._canonical(audio)
+            waveform = self.audio_processor.load_audio(str(source_path))
+            rate = self.sample_rate
+        else:
+            waveform = np.asarray(audio, dtype=np.float32)
+            if waveform.ndim != 1:
+                raise ValueError("Query waveform must be mono (1-D).")
+            rate = sample_rate if sample_rate is not None else self.sample_rate
+
+        embedder = self.embedder
+        if isinstance(embedder, WaveformEmbeddingBackend):
+            query_embedding = embedder.embed_audio_arrays([waveform], rate)
+        else:
+            query_embedding = self._embed_waveform_via_temp_file(embedder, waveform, rate)
+
+        # Excluding the source removes candidates after retrieval, so widen the
+        # page to avoid coming back short.
+        fetch_k = top_k * FILTER_OVERFETCH if (exclude_source and source_path) else top_k
+        results = self._search_embedding(query_embedding, fetch_k, filters)
+
+        if exclude_source and source_path is not None:
+            source = str(source_path)
+            results = [r for r in results if r.filepath != source]
+
+        return results[:top_k]
+
+    def _embed_waveform_via_temp_file(
+        self,
+        embedder: EmbeddingBackend,
+        waveform: npt.NDArray[np.float32],
+        rate: int,
+    ) -> npt.NDArray[np.float32]:
+        """Embed a waveform through a backend that only accepts file paths."""
+        with TemporaryDirectory(prefix="echovector-query-") as temp_dir:
+            path = Path(temp_dir) / "query.wav"
+            sf.write(path, waveform, rate, subtype="FLOAT")
+            return embedder.embed_audio([str(path)])
+
+    def _search_embedding(
+        self,
+        embedding: npt.NDArray[np.float32],
+        top_k: int,
+        filters: SearchFilter | None,
+        merge_spans: bool = False,
+        max_gap_seconds: float = 0.0,
+        max_per_file: int | None = None,
+    ) -> list[SearchResult]:
+        """Retrieve and hydrate the nearest chunks to a single query vector."""
+        # Filtering, merging, and per-file capping all remove candidates after
+        # retrieval, so widen the page or the caller comes back short of top_k.
+        reduces_results = filters is not None or merge_spans or max_per_file is not None
+        fetch_k = top_k * FILTER_OVERFETCH if reduces_results else top_k
+
+        query_embedding = self._normalize_rows(embedding)
         distances, ids, metadata_rows = self.index_backend.search(query_embedding, k=fetch_k)
 
         results: list[SearchResult] = []
@@ -313,6 +492,14 @@ class EchoVector:
 
         if filters is not None:
             results = filters.apply(results)
+        if merge_spans:
+            results = merge_adjacent_spans(
+                results,
+                max_gap_seconds=max_gap_seconds,
+                min_relative_score=SPAN_MERGE_RELATIVE_SCORE,
+            )
+        if max_per_file is not None:
+            results = limit_per_file(results, max_per_file)
 
         return results[:top_k]
 
@@ -334,6 +521,7 @@ class EchoVector:
             "index_path": str(self.index_path),
             "metadata_path": str(self.db_path),
             "backend": manifest.backend if manifest else "<not yet indexed>",
+            "index_type": self.index_backend.index_type,
             "embedding_dim": self.index_backend.dimension,
             "files": self.index_backend.store.count_files(),
             "chunks": int(self.index_backend.index.ntotal),
@@ -352,6 +540,8 @@ class EchoVector:
         self.index_backend = FaissIndex(
             dimension=self.index_backend.dimension,
             db_path=str(self.db_path),
+            index_type=self.index_type,
+            **self.index_params,
         )
 
     def resolve_audio_files(
@@ -382,6 +572,69 @@ class EchoVector:
             file_path: Path to an audio file, in any equivalent spelling.
         """
         return self.index_backend.store.has_filepath(str(self._canonical(file_path)))
+
+    def is_stale(self, file_path: str | Path) -> bool:
+        """Return True if file_path has changed since it was indexed.
+
+        Args:
+            file_path: Path to an audio file, in any equivalent spelling.
+
+        Returns:
+            True when the file is unindexed, missing a recorded signature, or
+            its size/mtime no longer match what was stored.
+        """
+        return self._has_changed(self._canonical(file_path))
+
+    def prune(self) -> list[str]:
+        """Drop chunks whose source file no longer exists on disk.
+
+        Deleted recordings otherwise stay searchable forever, returning hits
+        that point at nothing.
+
+        Returns:
+            The filepaths that were removed, sorted.
+        """
+        removed: list[str] = []
+        for filepath in self.index_backend.store.list_filepaths():
+            if Path(filepath).exists():
+                continue
+            int_ids = self.index_backend.store.delete_by_filepath(filepath)
+            if int_ids:
+                self.index_backend.remove_int_ids(int_ids)
+            removed.append(filepath)
+
+        if removed:
+            self.index_backend.save(str(self.index_path))
+        return sorted(removed)
+
+    def stale_files(self) -> list[str]:
+        """Return indexed files that have changed or vanished since indexing.
+
+        Returns:
+            Sorted filepaths needing a re-index.
+        """
+        return sorted(
+            path
+            for path in self.index_backend.store.list_filepaths()
+            if self._has_changed(Path(path))
+        )
+
+    def _has_changed(self, file_path: Path) -> bool:
+        """Return True when a file must be (re-)indexed."""
+        stored = self.index_backend.store.get_file_signature(str(file_path))
+        if stored is None:
+            # Either never indexed, or indexed before signatures were recorded;
+            # both mean the store cannot vouch for what it holds.
+            return True
+        try:
+            current = file_path.stat()
+        except OSError:
+            # The file is gone. `prune()` removes it; re-reading is impossible.
+            return False
+        stored_mtime, stored_size = stored
+        return stored_size != current.st_size or not isclose(
+            stored_mtime, current.st_mtime, rel_tol=0.0, abs_tol=MTIME_TOLERANCE_SECONDS
+        )
 
     def close(self) -> None:
         """Release the metadata store connection."""
@@ -443,6 +696,7 @@ class EchoVector:
         chunk_number: int,
         start_seconds: float,
         end_seconds: float,
+        file_mtime: float,
     ) -> dict[str, Any]:
         return {
             "filepath": str(path),
@@ -456,6 +710,8 @@ class EchoVector:
             "channels": file_metadata.channels,
             "format": file_metadata.format,
             "file_size": file_metadata.file_size,
+            # Paired with file_size as the signature change detection compares.
+            "file_mtime": file_mtime,
         }
 
     def _iter_chunks(

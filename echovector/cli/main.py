@@ -1,6 +1,8 @@
 """Command-line interface for EchoVector."""
 
 import inspect
+import json
+import shlex
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -10,8 +12,11 @@ from rich.progress import Progress
 from rich.table import Table
 
 from echovector import EchoVector, SearchFilter, __version__
+from echovector.audio.extract import SUPPORTED_PLAYERS, extract_clip, player_command
 from echovector.embeddings.factory import backend_class_for
+from echovector.evaluation import RelevanceJudge, evaluate, load_golden_set
 from echovector.indexing.manifest import IndexManifest
+from echovector.search.results import SearchResult
 
 app = typer.Typer(
     name="echovector",
@@ -136,6 +141,21 @@ def search(
         float | None,
         typer.Option("--min-score", help="Discard results scoring below this threshold."),
     ] = None,
+    merge_spans: Annotated[
+        bool,
+        typer.Option(
+            "--merge-spans/--no-merge-spans",
+            help="Fold consecutive hits from one file into a single moment.",
+        ),
+    ] = True,
+    max_gap_seconds: Annotated[
+        float,
+        typer.Option("--max-gap", help="Largest silence still counted as one moment."),
+    ] = 0.0,
+    max_per_file: Annotated[
+        int | None,
+        typer.Option("--max-per-file", help="Cap how many results any one file contributes."),
+    ] = None,
 ) -> None:
     """Search an existing vector index without scanning audio files."""
     if not _require_index(store_dir):
@@ -146,28 +166,229 @@ def search(
             store_dir=store_dir, backend=backend, **_backend_kwargs(backend, device)
         )
         filters = SearchFilter(min_score=min_score) if min_score is not None else None
-        results = engine.search(query, top_k=top_k, filters=filters)
+        results = engine.search(
+            query,
+            top_k=top_k,
+            filters=filters,
+            merge_spans=merge_spans,
+            max_gap_seconds=max_gap_seconds,
+            max_per_file=max_per_file,
+        )
     except Exception as exc:
         console.print(f"[bold red]Search failed:[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
 
+    _print_results(results, title=f"Top {len(results)} Results for '{query}'")
+
+
+@app.command()
+def similar(
+    audio_path: Annotated[Path, typer.Argument(help="Audio file to find matches for.")],
+    top_k: Annotated[
+        int,
+        typer.Option("--top-k", "-k", help="Number of top results to return."),
+    ] = 5,
+    store_dir: StoreDirOption = Path(".echovector"),
+    backend: BackendOption = "clap",
+    device: DeviceOption = None,
+    include_source: Annotated[
+        bool,
+        typer.Option("--include-source", help="Keep hits from the query file itself."),
+    ] = False,
+) -> None:
+    """Find indexed audio that sounds like a given clip.
+
+    Uses no text at all, so it also works with audio-only backends such as
+    wav2vec2, hubert, and ast.
+    """
+    if not _require_index(store_dir):
+        raise typer.Exit(code=1)
+
+    try:
+        engine = EchoVector(
+            store_dir=store_dir, backend=backend, **_backend_kwargs(backend, device)
+        )
+        results = engine.search_by_audio(
+            audio_path, top_k=top_k, exclude_source=not include_source
+        )
+    except Exception as exc:
+        console.print(f"[bold red]Similarity search failed:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    _print_results(results, title=f"Sounds like '{audio_path.name}'")
+
+
+@app.command()
+def extract(
+    audio_path: Annotated[Path, typer.Argument(help="Source audio file.")],
+    start: Annotated[float, typer.Argument(help="Start time in seconds.")],
+    end: Annotated[float, typer.Argument(help="End time in seconds.")],
+    out_path: Annotated[Path, typer.Option("--out", "-o", help="Where to write the clip.")],
+    padding: Annotated[
+        float,
+        typer.Option("--padding", help="Extra seconds of context on each side."),
+    ] = 0.0,
+) -> None:
+    """Write the audio between two timestamps to a new file."""
+    try:
+        written = extract_clip(audio_path, start, end, out_path=out_path, padding=padding)
+    except Exception as exc:
+        console.print(f"[bold red]Extract failed:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    console.print(f"[bold green]Wrote[/bold green] {written}")
+
+
+@app.command()
+def play(
+    audio_path: Annotated[Path, typer.Argument(help="Source audio file.")],
+    start: Annotated[float, typer.Argument(help="Start time in seconds.")],
+    end: Annotated[float, typer.Argument(help="End time in seconds.")],
+    player: Annotated[
+        str,
+        typer.Option("--player", help=f"One of: {', '.join(SUPPORTED_PLAYERS)}."),
+    ] = "ffplay",
+) -> None:
+    """Print the command that plays a search hit.
+
+    The command is printed rather than run, so nothing is executed on your
+    behalf and the line can be piped, copied, or edited first.
+    """
+    try:
+        argv = player_command(audio_path, start, end, player=player)
+    except Exception as exc:
+        console.print(f"[bold red]Cannot build a play command:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    console.print(shlex.join(argv))
+
+
+@app.command(name="eval")
+def evaluate_index(
+    golden_set: Annotated[Path, typer.Argument(help="Golden-set JSON file.")],
+    store_dir: StoreDirOption = Path(".echovector"),
+    backend: BackendOption = "clap",
+    device: DeviceOption = None,
+    ks: Annotated[
+        str,
+        typer.Option("--ks", help="Comma-separated cut-offs to score at."),
+    ] = "1,5,10",
+    min_overlap: Annotated[
+        float,
+        typer.Option("--min-overlap", help="Overlap fraction required to count as a hit."),
+    ] = 0.0,
+    merge_spans: Annotated[
+        bool,
+        typer.Option("--merge-spans/--no-merge-spans", help="Score merged moments."),
+    ] = True,
+    per_query: Annotated[
+        bool,
+        typer.Option("--per-query", help="Show a row per query as well as the summary."),
+    ] = False,
+    as_json: Annotated[
+        bool,
+        typer.Option("--json", help="Emit the report as JSON."),
+    ] = False,
+) -> None:
+    """Measure retrieval quality against a golden set.
+
+    Without this, a change to chunk size, backend, or index type is a guess:
+    nothing else in the tool says whether search got better or worse.
+    """
+    if not _require_index(store_dir):
+        raise typer.Exit(code=1)
+
+    try:
+        cutoffs = tuple(int(part) for part in ks.split(",") if part.strip())
+        if not cutoffs:
+            raise ValueError("--ks needs at least one cut-off, e.g. --ks 1,5,10")
+
+        engine = EchoVector(
+            store_dir=store_dir, backend=backend, **_backend_kwargs(backend, device)
+        )
+        report = evaluate(
+            lambda query, k: engine.search(query, top_k=k, merge_spans=merge_spans),
+            load_golden_set(golden_set),
+            ks=cutoffs,
+            judge=RelevanceJudge(min_overlap_fraction=min_overlap),
+        )
+    except Exception as exc:
+        console.print(f"[bold red]Evaluation failed:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    if as_json:
+        console.print_json(json.dumps(report.to_dict()))
+    else:
+        console.print(report.format_table(include_per_query=per_query))
+
+
+def _print_results(results: list[SearchResult], title: str) -> None:
+    """Render search results, or say plainly that there were none."""
     if not results:
         console.print("[yellow]No results found.[/yellow]")
         return
 
-    table = Table(title=f"Top {len(results)} Results for '{query}'")
+    table = Table(title=title)
     table.add_column("Score", justify="right", style="cyan", no_wrap=True)
     table.add_column("File", style="magenta")
     table.add_column("Timestamp", justify="right", style="green")
+    table.add_column("Chunks", justify="right", style="dim")
 
     for result in results:
         table.add_row(
             f"{result.score:.4f}",
             str(result.metadata.get("filename", result.filepath)),
             f"{result.timestamp_range.start:.1f}s-{result.timestamp_range.end:.1f}s",
+            str(result.metadata.get("merged_chunk_count", 1)),
         )
 
     console.print(table)
+
+
+@app.command()
+def prune(
+    store_dir: StoreDirOption = Path(".echovector"),
+    backend: BackendOption = "clap",
+    device: DeviceOption = None,
+    check_only: Annotated[
+        bool,
+        typer.Option("--check", help="Report what would change without touching the index."),
+    ] = False,
+) -> None:
+    """Drop deleted files from the index and report ones that changed.
+
+    Files are matched by content signature, so a recording edited since it was
+    indexed is reported here and re-read on the next `index` run.
+    """
+    if not _require_index(store_dir):
+        raise typer.Exit(code=1)
+
+    try:
+        engine = EchoVector(
+            store_dir=store_dir, backend=backend, **_backend_kwargs(backend, device)
+        )
+        stale = engine.stale_files()
+        removed = [] if check_only else engine.prune()
+        if check_only:
+            removed = [
+                path
+                for path in engine.index_backend.store.list_filepaths()
+                if not Path(path).exists()
+            ]
+    except Exception as exc:
+        console.print(f"[bold red]Prune failed:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    verb = "Would remove" if check_only else "Removed"
+    console.print(f"[bold green]{verb}[/bold green] {len(removed)} deleted file(s).")
+    for path in removed:
+        console.print(f"  [dim]-[/dim] {path}")
+
+    if stale:
+        console.print(f"[yellow]{len(stale)} file(s) changed since indexing:[/yellow]")
+        for path in stale:
+            console.print(f"  [dim]~[/dim] {path}")
+        console.print("[dim]Re-run 'echovector index' on them to refresh.[/dim]")
 
 
 @app.command()

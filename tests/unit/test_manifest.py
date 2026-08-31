@@ -88,3 +88,51 @@ def test_chunking_differences_are_reported_not_fatal(tmp_path) -> None:
 
 def test_no_chunking_differences_when_identical() -> None:
     assert _manifest().chunking_differences(_manifest()) == []
+
+
+def test_index_type_defaults_to_flat() -> None:
+    assert _manifest().index_type == "flat"
+
+
+def test_index_type_round_trips(tmp_path) -> None:
+    _manifest(index_type="hnsw").write(tmp_path)
+    assert IndexManifest.read(tmp_path).index_type == "hnsw"
+
+
+def test_manifest_written_before_index_type_still_loads(tmp_path) -> None:
+    """The field arrived after format 1 shipped; older stores must not be invalidated."""
+    IndexManifest.path_for(tmp_path).write_text(
+        json.dumps(
+            {
+                "format_version": FORMAT_VERSION,
+                "backend": "clap:laion/clap-htsat-unfused",
+                "embedding_dim": 512,
+                "chunk_seconds": 10.0,
+                "overlap_seconds": 1.0,
+                "sample_rate": 48000,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = IndexManifest.read(tmp_path)
+
+    assert loaded is not None
+    assert loaded.index_type == "flat"
+
+
+def test_different_index_type_is_reported_not_fatal(tmp_path) -> None:
+    """A structure change alters recall and speed, never what a score means."""
+    stored = _manifest(index_type="flat")
+    requested = _manifest(index_type="ivf")
+
+    stored.assert_compatible_with(requested, tmp_path)
+
+    difference = stored.index_type_difference(requested)
+    assert difference is not None
+    assert "'flat'" in difference
+    assert "'ivf'" in difference
+
+
+def test_no_index_type_difference_when_identical() -> None:
+    assert _manifest().index_type_difference(_manifest()) is None

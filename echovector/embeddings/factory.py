@@ -8,10 +8,9 @@ from echovector.embeddings.base import EmbeddingBackend
 # Map backend names to their (module, class) for lazy import.
 _BACKEND_LOCATIONS: dict[str, tuple[str, str]] = {
     "clap": ("echovector.embeddings.clap", "ClapBackend"),
-    "whisper": ("echovector.embeddings.whisper_enc", "WhisperBackend"),
-    "wav2vec2": ("echovector.embeddings.wav2vec2", "Wav2Vec2Backend"),
-    "hubert": ("echovector.embeddings.hubert", "HubertBackend"),
-    "ast": ("echovector.embeddings.ast_model", "ASTBackend"),
+    "wav2vec2": ("echovector.embeddings.transformers_audio", "Wav2Vec2Backend"),
+    "hubert": ("echovector.embeddings.transformers_audio", "HubertBackend"),
+    "ast": ("echovector.embeddings.transformers_audio", "ASTBackend"),
     "local": ("echovector.embeddings.local", "LocalFeatureBackend"),
     "smoke": ("echovector.embeddings.local", "LocalFeatureBackend"),
 }

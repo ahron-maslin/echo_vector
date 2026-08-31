@@ -7,7 +7,7 @@ could silently drift apart, producing confident but wrong search results.
 import numpy as np
 import pytest
 
-from echovector.indexing import FaissIndex
+from echovector.indexing import INDEX_TYPES, FaissIndex
 
 
 @pytest.fixture
@@ -173,3 +173,68 @@ def test_loading_a_missing_index_raises(tmp_path) -> None:
             index.load(str(tmp_path / "nope.faiss"))
     finally:
         index.store.close()
+
+
+# ----------------------------------------------------------------------
+# The same invariants, for every approximate structure
+# ----------------------------------------------------------------------
+
+
+def _corpus(count: int, dimension: int = 8, seed: int = 3) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    points = rng.standard_normal((count, dimension)).astype(np.float32)
+    points /= np.linalg.norm(points, axis=1, keepdims=True)
+    return np.ascontiguousarray(points, dtype=np.float32)
+
+
+@pytest.mark.parametrize("index_type", INDEX_TYPES)
+def test_readding_a_string_id_evicts_the_old_vector_for_every_type(
+    tmp_path, index_type: str
+) -> None:
+    """Approximate structures must not become orphan farms.
+
+    HNSW cannot delete in place, so this also exercises the rebuild path that
+    keeps the eviction invariant true there.
+    """
+    vectors = _corpus(32)
+    index = FaissIndex(
+        dimension=8,
+        db_path=str(tmp_path / "meta.sqlite"),
+        index_type=index_type,
+        nlist=4,
+    )
+    try:
+        ids = [f"c{i}" for i in range(32)]
+        index.add(vectors, ids, [{"version": 1} for _ in ids])
+        index.add(vectors, ids, [{"version": 2} for _ in ids])
+
+        assert index.index.ntotal == 32
+        assert index.store.count() == 32
+        assert index.desync_report() is None
+
+        _, found, metadata = index.search(vectors[:1], k=1)
+        assert found[0][0] is not None
+        assert metadata[0][0] == {"version": 2}
+    finally:
+        index.store.close()
+
+
+@pytest.mark.parametrize("index_type", INDEX_TYPES)
+def test_next_int_id_survives_a_lost_store_for_every_type(tmp_path, index_type: str) -> None:
+    """IDs still come from both halves once the structure is reloaded from disk."""
+    db_path = tmp_path / "meta.sqlite"
+    index_path = tmp_path / "index.faiss"
+    index = FaissIndex(dimension=8, db_path=str(db_path), index_type=index_type, nlist=4)
+    index.add(_corpus(32), [f"c{i}" for i in range(32)], [{} for _ in range(32)])
+    index.save(str(index_path))
+    index.store.close()
+
+    db_path.unlink()
+    recovered = FaissIndex(dimension=8, db_path=str(db_path))
+    recovered.load(str(index_path))
+    try:
+        assert recovered.store.get_max_int_id() == -1
+        assert recovered.max_faiss_int_id() == 31
+        assert recovered.next_int_id() == 32
+    finally:
+        recovered.store.close()

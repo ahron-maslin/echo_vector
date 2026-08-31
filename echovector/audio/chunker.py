@@ -34,9 +34,84 @@ class SilenceAwareChunker:
         Returns:
             A list of audio chunks.
         """
-        if len(audio) == 0:
-            return []
+        return [audio[start:end] for start, end in self._chunk_spans(audio, self.sample_rate)]
 
+    def chunk_with_timestamps(
+        self,
+        audio: npt.NDArray[np.float32],
+        sample_rate: int | None = None,
+    ) -> list[tuple[float, float, npt.NDArray[np.float32]]]:
+        """Split audio into chunks tagged with their position in the source audio.
+
+        Silence between utterances is dropped, so chunk ``n + 1`` does not generally
+        start where chunk ``n`` ended. The returned offsets are absolute positions in
+        ``audio``, not cumulative lengths of the emitted chunks.
+
+        Args:
+            audio: The audio signal to chunk.
+            sample_rate: Sample rate of ``audio``. Defaults to the instance sample rate.
+
+        Returns:
+            A list of ``(start_seconds, end_seconds, waveform)`` tuples ordered by
+            start time. No waveform is longer than ``max_chunk_length``.
+
+        Raises:
+            ValueError: If the resolved sample rate is not positive.
+        """
+        resolved_rate = self.sample_rate if sample_rate is None else sample_rate
+        if resolved_rate <= 0:
+            raise ValueError(f"sample_rate must be positive, got {resolved_rate}.")
+
+        return [
+            (start / resolved_rate, end / resolved_rate, audio[start:end])
+            for start, end in self._chunk_spans(audio, resolved_rate)
+        ]
+
+    def _chunk_spans(
+        self,
+        audio: npt.NDArray[np.float32],
+        sample_rate: int,
+    ) -> list[tuple[int, int]]:
+        """Compute chunk boundaries as absolute sample offsets into ``audio``.
+
+        Args:
+            audio: The audio signal to chunk.
+            sample_rate: Sample rate used to convert the length bounds to samples.
+
+        Returns:
+            A list of half-open ``(start_sample, end_sample)`` spans.
+        """
+        spans: list[tuple[int, int]] = []
+        if len(audio) == 0:
+            return spans
+
+        # A zero-length ceiling would make the splitting loop below never advance.
+        max_samples = max(1, int(self.max_chunk_length * sample_rate))
+        min_samples = int(self.min_chunk_length * sample_rate)
+
+        for interval_start, interval_end in self._non_silent_intervals(audio):
+            start = interval_start
+            while interval_end - start > max_samples:
+                spans.append((start, start + max_samples))
+                start += max_samples
+
+            # A remainder shorter than min_chunk_length is dropped rather than merged
+            # into its neighbour: the neighbour is separated by discarded silence, so a
+            # merged span would claim a duration the merged waveform does not contain.
+            if interval_end > start and (interval_end - start >= min_samples or not spans):
+                spans.append((start, interval_end))
+
+        return spans
+
+    def _non_silent_intervals(self, audio: npt.NDArray[np.float32]) -> list[tuple[int, int]]:
+        """Locate the runs of audio that sit above the silence threshold.
+
+        Args:
+            audio: The audio signal to inspect.
+
+        Returns:
+            A list of half-open ``(start_sample, end_sample)`` spans of non-silent audio.
+        """
         max_amplitude = float(np.max(np.abs(audio)))
         if max_amplitude == 0.0:
             return []
@@ -47,25 +122,8 @@ class SilenceAwareChunker:
             return []
 
         breaks = np.where(np.diff(non_silent) > 1)[0] + 1
-        intervals = [
+        return [
             (int(group[0]), int(group[-1]) + 1)
             for group in np.split(non_silent, breaks)
             if len(group) > 0
         ]
-
-        chunks: list[npt.NDArray[np.float32]] = []
-        min_samples = int(self.min_chunk_length * self.sample_rate)
-        max_samples = int(self.max_chunk_length * self.sample_rate)
-
-        for start, end in intervals:
-            interval_audio: npt.NDArray[np.float32] = audio[start:end]
-
-            while len(interval_audio) > max_samples:
-                chunks.append(interval_audio[:max_samples])
-                interval_audio = interval_audio[max_samples:]
-
-            keep_short_first = len(interval_audio) > 0 and len(chunks) == 0
-            if len(interval_audio) >= min_samples or keep_short_first:
-                chunks.append(interval_audio)
-
-        return chunks
