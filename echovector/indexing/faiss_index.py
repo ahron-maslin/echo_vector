@@ -1,6 +1,7 @@
 """Faiss-based index implementation."""
 
 import os
+import warnings
 from typing import Any, cast
 
 import faiss
@@ -14,6 +15,11 @@ from .store import SQLiteStore
 #: wrapped in an ``IndexIDMap2`` so vectors keep the explicit integer IDs that
 #: join them to the metadata store.
 INDEX_TYPES: tuple[str, ...] = ("flat", "ivf", "hnsw")
+
+#: Faiss's own guidance for IVF: fewer points per centroid than this and the
+#: clustering is not worth doing. Used only to shrink `nlist` for a corpus too
+#: small to support the requested cell count.
+MIN_POINTS_PER_CENTROID = 39
 
 
 class FaissIndex(BaseIndex):
@@ -55,9 +61,9 @@ class FaissIndex(BaseIndex):
             dimension: Dimensionality of the embeddings.
             db_path: Path to the SQLite store database.
             index_type: One of :data:`INDEX_TYPES`.
-            nlist: IVF only. Number of Voronoi cells. Also the minimum number of
-                vectors the first batch must carry, since training cannot
-                produce more centroids than it has points.
+            nlist: IVF only. Number of Voronoi cells, and the number of vectors
+                that must accumulate before the index can be trained. Reduced
+                automatically if the whole corpus turns out to be smaller.
             nprobe: IVF only. Cells visited per query. Higher is slower and more
                 accurate; the default probes roughly a quarter of the index.
             hnsw_m: HNSW only. Neighbours retained per node.
@@ -79,6 +85,12 @@ class FaissIndex(BaseIndex):
         self.hnsw_m = hnsw_m
         self.ef_construction = ef_construction
         self.ef_search = ef_search
+
+        # Vectors held back until an untrained IVF index has enough to train on.
+        # Buffered for both halves at once so they never disagree.
+        self._pending_embeddings: list[npt.NDArray[np.float32]] = []
+        self._pending_ids: list[list[str]] = []
+        self._pending_metadata: list[list[dict[str, Any]]] = []
 
         self.index: faiss.IndexIDMap2 = self._build_index()
         self.store = SQLiteStore(db_path)
@@ -169,10 +181,10 @@ class FaissIndex(BaseIndex):
 
         Supports batched and incremental indexing.
 
-        An IVF index is trained on the first batch it receives. If that batch
-        carries fewer than `nlist` vectors there are not enough points to place
-        the centroids, and this raises before anything is written, leaving the
-        index and store untouched.
+        An IVF index cannot hold anything until it is trained, and training needs
+        at least `nlist` vectors. Batches are buffered until there are enough,
+        then written together; `flush` (called by `save`) trains on whatever has
+        accumulated, shrinking `nlist` if the corpus is smaller than requested.
 
         Args:
             embeddings: A 2D numpy array of embeddings (np.float32).
@@ -201,46 +213,121 @@ class FaissIndex(BaseIndex):
         # Ensure embeddings are contiguous and float32
         embeddings_f32 = np.ascontiguousarray(embeddings, dtype=np.float32)
 
-        # Training can fail on a too-small first batch, so it runs before any
-        # eviction: a rejected add must not have already dropped live vectors.
-        self._ensure_trained(embeddings_f32)
+        if not self.index.is_trained:
+            # An untrained IVF index cannot hold anything yet. Buffer rather than
+            # reject: a batch is normally far smaller than nlist, so judging the
+            # first one alone would make IVF unusable at any default batch size.
+            self._pending_embeddings.append(embeddings_f32)
+            self._pending_ids.append(list(ids))
+            self._pending_metadata.append(list(metadata))
+            self._flush_pending(force=False)
+            return
 
+        self._write(embeddings_f32, list(ids), list(metadata))
+
+    def _write(
+        self,
+        embeddings: npt.NDArray[np.float32],
+        ids: list[str],
+        metadata: list[dict[str, Any]],
+    ) -> None:
+        """Write one batch into both halves of the index.
+
+        Args:
+            embeddings: Contiguous float32 vectors.
+            ids: String IDs, one per vector.
+            metadata: Metadata dictionaries, one per vector.
+        """
         # The store treats string_id as unique and replaces on conflict. Evict the
         # superseded vectors first, otherwise they linger in Faiss with no store row
         # and silently consume result slots on every later search.
-        superseded = self.store.get_int_ids_for_string_ids(list(ids))
+        superseded = self.store.get_int_ids_for_string_ids(ids)
         if superseded:
             self.remove_int_ids(superseded)
 
-        int_ids = list(range(self.next_int_id(), self.next_int_id() + num_vectors))
+        start = self.next_int_id()
+        int_ids = list(range(start, start + embeddings.shape[0]))
 
-        # Add to Faiss index with explicit IDs
-        self.index.add_with_ids(embeddings_f32, np.array(int_ids, dtype=np.int64))
-
-        # Add to SQLite store
+        self.index.add_with_ids(embeddings, np.array(int_ids, dtype=np.int64))
         self.store.add(int_ids, ids, metadata)
 
-    def _ensure_trained(self, embeddings: npt.NDArray[np.float32]) -> None:
-        """Train the index on its first batch if the structure requires it.
+    def _training_pool(self) -> npt.NDArray[np.float32] | None:
+        """Return the buffered vectors waiting to train an IVF index.
+
+        Returns:
+            The stacked buffer, or None when nothing is buffered.
+        """
+        if not self._pending_embeddings:
+            return None
+        return np.ascontiguousarray(np.vstack(self._pending_embeddings), dtype=np.float32)
+
+    def _try_train(self, minimum: int) -> bool:
+        """Train on the buffered vectors once there are at least `minimum`.
 
         Args:
-            embeddings: The batch about to be added.
+            minimum: Vectors required before training is attempted.
 
-        Raises:
-            ValueError: If the batch is too small to train on.
+        Returns:
+            True if the index is now trained.
         """
-        if self.index.is_trained:
-            return
+        pool = self._training_pool()
+        if pool is None or pool.shape[0] < minimum:
+            return False
+        self.index.train(pool)
+        return True
 
+    def _flush_pending(self, force: bool) -> None:
+        """Add buffered vectors once the index can hold them.
+
+        IVF must see enough vectors to place its centroids before it can accept
+        any. Those vectors arrive one batch at a time, and a batch is normally
+        far smaller than `nlist`, so they are buffered — in both halves, so the
+        index and store never disagree — until there are enough.
+
+        Args:
+            force: Train on whatever is buffered even if it is under `nlist`,
+                reducing the cell count to fit. Used when indexing has finished
+                and no more vectors are coming.
+        """
         required = int(cast("Any", self._sub_index()).nlist)
-        available = int(embeddings.shape[0])
-        if available < required:
-            raise ValueError(
-                f"An IVF index must be trained on at least nlist={required} vectors before it "
-                f"can hold any, but the first batch carries {available}. Index more audio in a "
-                f"single call, lower nlist, or use index_type='flat' for a small library."
-            )
-        self.index.train(embeddings)
+        if not self.index.is_trained and not self._try_train(required):
+            if not force:
+                return
+            pool = self._training_pool()
+            if pool is None:
+                return
+            # Faiss cannot place more centroids than it has points. Rather than
+            # refuse a small corpus outright, shrink the cell count to fit it.
+            fitted = max(1, min(required, pool.shape[0] // MIN_POINTS_PER_CENTROID or 1))
+            if fitted != required:
+                warnings.warn(
+                    f"An IVF index wanted nlist={required} cells but the corpus holds only "
+                    f"{pool.shape[0]} vectors; using nlist={fitted}. A flat index is usually "
+                    f"the better choice at this size.",
+                    RuntimeWarning,
+                    stacklevel=3,
+                )
+                self.nlist = fitted
+                self.index = self._build_index()
+            refreshed = self._training_pool()
+            if refreshed is None:  # pragma: no cover - pool checked non-empty above
+                return
+            self.index.train(refreshed)
+
+        pending, self._pending_embeddings = self._pending_embeddings, []
+        pending_ids, self._pending_ids = self._pending_ids, []
+        pending_meta, self._pending_metadata = self._pending_metadata, []
+        for embeddings, ids, metadata in zip(pending, pending_ids, pending_meta, strict=True):
+            self._write(embeddings, ids, metadata)
+
+    def flush(self) -> None:
+        """Add any vectors still buffered waiting for IVF training.
+
+        Called before saving, so an index is never written to disk with vectors
+        stranded in memory.
+        """
+        if self._pending_embeddings:
+            self._flush_pending(force=True)
 
     def next_int_id(self) -> int:
         """Return the next free integer ID.
@@ -427,6 +514,7 @@ class FaissIndex(BaseIndex):
         Args:
             index_path: The file path to save the index to.
         """
+        self.flush()
         parent = os.path.dirname(index_path)
         if parent:
             os.makedirs(parent, exist_ok=True)

@@ -359,16 +359,77 @@ def test_index_types_round_trip_through_disk(tmp_path, index_type: str) -> None:
         reloaded.store.close()
 
 
-def test_ivf_rejects_a_first_batch_too_small_to_train() -> None:
-    """Faiss would assert deep inside clustering; say what to do instead."""
-    index = FaissIndex(dimension=8, index_type="ivf", nlist=32)
+def test_ivf_buffers_small_batches_until_it_can_train(tmp_path) -> None:
+    """IVF must not judge the corpus by its first batch.
 
-    with pytest.raises(ValueError, match="at least nlist=32"):
+    Training needs nlist vectors, but a batch is normally far smaller than that,
+    so rejecting the first batch made IVF unusable at any realistic batch size
+    however large the corpus was.
+    """
+    index = FaissIndex(dimension=8, index_type="ivf", nlist=32, db_path=str(tmp_path / "m.db"))
+    try:
+        vectors = _clustered(64, 8)
+        for start in range(0, 64, 8):  # eight batches of eight
+            batch = vectors[start : start + 8]
+            index.add(batch, [f"c{start + i}" for i in range(len(batch))])
+
+        assert index.index.is_trained
+        assert index.index.ntotal == 64
+        assert index.store.count() == 64
+        assert index.desync_report() is None
+    finally:
+        index.store.close()
+
+
+def test_buffered_vectors_are_invisible_until_flushed(tmp_path) -> None:
+    """Buffering must hold back both halves, so they never disagree."""
+    index = FaissIndex(dimension=8, index_type="ivf", nlist=32, db_path=str(tmp_path / "m.db"))
+    try:
         index.add(_clustered(10, 8), [f"c{i}" for i in range(10)])
 
-    # The rejected batch must leave both halves untouched.
-    assert index.index.ntotal == 0
-    assert index.store.count() == 0
+        assert index.index.ntotal == 0
+        assert index.store.count() == 0
+        assert index.desync_report() is None
+    finally:
+        index.store.close()
+
+
+def test_a_corpus_smaller_than_nlist_still_indexes(tmp_path) -> None:
+    """Shrink the cell count rather than refusing a small library outright."""
+    index = FaissIndex(dimension=8, index_type="ivf", nlist=100, db_path=str(tmp_path / "m.db"))
+    try:
+        index.add(_clustered(50, 8), [f"c{i}" for i in range(50)])
+
+        with pytest.warns(RuntimeWarning, match="wanted nlist=100"):
+            index.flush()
+
+        assert index.index.is_trained
+        assert index.index.ntotal == 50
+        assert index.store.count() == 50
+        assert index.nlist < 100
+    finally:
+        index.store.close()
+
+
+def test_save_flushes_buffered_vectors(tmp_path) -> None:
+    """An index must never reach disk with vectors stranded in memory."""
+    index_path = tmp_path / "index.faiss"
+    index = FaissIndex(dimension=8, index_type="ivf", nlist=100, db_path=str(tmp_path / "m.db"))
+    try:
+        index.add(_clustered(50, 8), [f"c{i}" for i in range(50)])
+        with pytest.warns(RuntimeWarning):
+            index.save(str(index_path))
+
+        assert index.index.ntotal == 50
+    finally:
+        index.store.close()
+
+    reopened = FaissIndex(dimension=8, index_type="ivf", db_path=str(tmp_path / "m2.db"))
+    try:
+        reopened.load(str(index_path))
+        assert reopened.index.ntotal == 50
+    finally:
+        reopened.store.close()
 
 
 def test_ivf_trains_on_the_first_batch_then_accepts_small_ones() -> None:

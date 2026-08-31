@@ -197,6 +197,31 @@ depends on. It is also the only mode available to the `wav2vec2`, `hubert`, and
 The cost is query latency: **614 ms** against 67 ms for a text query, because the
 query clip must be decoded and embedded rather than just a short string.
 
+## Approximate indexes
+
+`flat` is exhaustive and exact. `ivf` and `hnsw` trade recall for speed. Measured
+against the flat baseline on the same 500 real CLAP embeddings, using the 50
+ESC-50 text queries:
+
+| structure | settings | recall@10 vs flat |
+|-----------|----------|-------------------|
+| `hnsw` | defaults (`ef_search=64`) | **1.000** |
+| `hnsw` | `ef_search=16` | 0.994 |
+| `ivf` | `nlist=20` (default `nprobe`) | **1.000** |
+| `ivf` | `nlist=20, nprobe=4` | 0.966 |
+
+At the shipped defaults both are effectively lossless here, and degrade
+gracefully when tuned down. **This is a floor, not a promise:** 500 vectors is
+far below the scale where an approximate index is worth using at all, and recall
+generally falls as a corpus grows. Treat these as evidence the defaults are not
+broken, and measure your own corpus with `eval` before trusting them on it.
+
+One caveat found while measuring: a corpus of near-identical vectors — pure tones
+a few Hz apart, where the top-15 scores span 0.008 — gives 0.00 overlap between
+flat and ANN results. Nothing is wrong; when hundreds of candidates tie to four
+decimal places, which ten come back is arbitrary in any structure. It is a
+reminder that ANN recall is only meaningful on a corpus with real spread.
+
 ## What this does and does not establish
 
 **Does:** EchoVector retrieves environmental and non-speech audio from a plain
@@ -216,5 +241,6 @@ single-source; a real library of long, noisy, overlapping recordings is harder.
   synthetic regularity.
 - **An adaptive merge band.** The optimal value depends on chunk length relative
   to event length, which a constant cannot express.
-- **Approximate indexes.** `ivf` and `hnsw` recall against the `flat` baseline at
-  a corpus size where they matter.
+- **Approximate indexes at scale.** Measured above at 500 vectors, which is far
+  below the size where they earn their keep. Recall generally falls as a corpus
+  grows, so the interesting measurement is at 10^5-10^6 chunks.
