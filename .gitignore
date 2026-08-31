@@ -63,8 +63,12 @@ Thumbs.db
 .env
 .env.local
 
-# Benchmark outputs
+# Benchmark outputs (corpora and indexes are rebuilt, results are published in
+# benchmarks/RESULTS.md)
 benchmark_results/
+benchmark-esc50/
+ESC-50-master/
+results/
 
 # Demo artifacts (demo.py itself is tracked; these are what it generates)
 demo_audio/

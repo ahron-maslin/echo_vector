@@ -4,15 +4,18 @@ install:
 	uv sync --all-extras
 
 lint:
-	uv run ruff check echovector/ tests/
-	uv run ruff format --check echovector/ tests/
+	uv run ruff check echovector/ tests/ benchmarks/
+	uv run ruff format --check echovector/ tests/ benchmarks/
 
 lint-fix:
-	uv run ruff check --fix echovector/ tests/
-	uv run ruff format echovector/ tests/
+	uv run ruff check --fix echovector/ tests/ benchmarks/
+	uv run ruff format echovector/ tests/ benchmarks/
 
 typecheck:
-	uv run mypy echovector/
+	uv run mypy echovector/ benchmarks/
+
+benchmark:
+	uv run python benchmarks/esc50.py --dataset $(ESC50) --backend clap --json-out results/esc50-clap.json
 
 test:
 	uv run pytest tests/ -v

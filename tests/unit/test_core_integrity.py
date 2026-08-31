@@ -723,3 +723,80 @@ def test_requesting_a_different_structure_warns_and_keeps_the_stored_one(tmp_pat
         reopened = _engine(store, index_type="flat")
 
     assert reopened.index_type == "hnsw"
+
+
+# ---------------------------------------------------------------------------
+# Parallel decoding
+# ---------------------------------------------------------------------------
+
+
+def test_decode_workers_do_not_change_the_index(tmp_path: Path) -> None:
+    """Reading ahead is an optimisation; the resulting index must be identical.
+
+    Compared against the serial path rather than a hardcoded ranking, because
+    equally-scoring chunks tie-break arbitrarily and that ordering is not the
+    property under test.
+    """
+    audio_dir = tmp_path / "audio"
+    audio_dir.mkdir()
+    for i in range(6):
+        _write_tone(audio_dir / f"tone-{i}.wav", frequency=200.0 + i * 120, duration=2.0)
+
+    def index_with(workers: int) -> list[tuple[str, float, float]]:
+        engine = _engine(tmp_path / f"store-{workers}")
+        assert engine.index(audio_dir, decode_workers=workers) == 12
+        assert engine.index_backend.desync_report() is None
+        rows = engine.index_backend.store.get_by_int_ids(list(range(12)))[1]
+        return sorted(
+            (str(row["filepath"]), float(row["start"]), float(row["end"]))
+            for row in rows
+            if row is not None
+        )
+
+    serial = index_with(1)
+    assert len(serial) == 12
+    assert index_with(2) == serial
+    assert index_with(4) == serial
+
+
+def test_progress_callback_stays_in_order_when_prefetching(tmp_path: Path) -> None:
+    """Files are decoded concurrently but must still be reported in order."""
+    audio_dir = tmp_path / "audio"
+    audio_dir.mkdir()
+    for i in range(8):
+        _write_tone(audio_dir / f"tone-{i}.wav", frequency=200.0 + i * 90)
+
+    seen: list[tuple[int, str]] = []
+    engine = _engine(tmp_path / "store")
+    engine.index(
+        audio_dir,
+        decode_workers=4,
+        on_file_indexed=lambda done, _total, path: seen.append((done, path.name)),
+    )
+
+    assert [done for done, _ in seen] == list(range(1, 9))
+    assert [name for _, name in seen] == sorted(name for _, name in seen)
+
+
+def test_index_rejects_zero_decode_workers(tmp_path: Path) -> None:
+    _write_tone(tmp_path / "tone.wav")
+    with pytest.raises(ValueError, match="decode_workers"):
+        _engine(tmp_path / "store").index(tmp_path / "tone.wav", decode_workers=0)
+
+
+def test_a_failing_decode_still_propagates(tmp_path: Path, monkeypatch) -> None:
+    """Errors must not be swallowed by the worker pool."""
+    audio_dir = tmp_path / "audio"
+    audio_dir.mkdir()
+    for i in range(4):
+        _write_tone(audio_dir / f"tone-{i}.wav")
+
+    engine = _engine(tmp_path / "store")
+    monkeypatch.setattr(
+        engine.audio_processor,
+        "load_audio",
+        lambda _path: (_ for _ in ()).throw(RuntimeError("decode exploded")),
+    )
+
+    with pytest.raises(RuntimeError, match="decode exploded"):
+        engine.index(audio_dir, decode_workers=3)

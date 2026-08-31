@@ -20,6 +20,20 @@ Audio → Audio Chunks → Audio Embeddings ─┐
 Text Query → Text Embedding ──────────────┘
 ```
 
+### Does it work?
+
+Measured on [ESC-50](https://github.com/karoldvl/ESC-50) — 500 environmental recordings, 50
+natural-language queries, 10 correct clips each, so chance is 0.020:
+
+| | precision@1 | recall@10 | MRR | nDCG@10 |
+|---|---|---|---|---|
+| **CLAP** | **0.900** | **0.800** | **0.937** | **0.835** |
+| chance | 0.020 | 0.020 | — | — |
+
+For 45 of 50 queries the top result was already correct, and every query found a correct clip in its
+top 10. Reproduce it yourself with `python benchmarks/esc50.py`; full methodology, per-class results,
+and known weaknesses are in [benchmarks/RESULTS.md](benchmarks/RESULTS.md).
+
 ### What it is good at
 
 The default backend, [CLAP](https://huggingface.co/laion/clap-htsat-unfused), is trained on audio
@@ -179,9 +193,8 @@ A result counts as relevant when it overlaps an annotated span, so chunk boundar
 line up with your annotations. Use `eval` to compare backends, chunk lengths, or index types against
 each other instead of by feel.
 
-> These figures come from a synthetic tone corpus used to exercise the harness — they say nothing
-> about real-world quality. **EchoVector has no published retrieval benchmark yet**; that is the
-> next thing worth doing, and this command is how it gets done.
+> The figures above come from a synthetic tone corpus used to exercise the harness. For real
+> measured quality on a public dataset, see [benchmarks/RESULTS.md](benchmarks/RESULTS.md).
 
 The search command does not reopen or scan the audio files. All expensive audio processing happens
 during `index`; `search` loads the saved vector index, embeds the short text query, and returns the

@@ -110,6 +110,7 @@ convention = "google"
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["D", "ANN", "S101", "S603", "ARG", "E501", "PT011"]
 "echovector/api/server.py" = ["B008"]
+"benchmarks/**/*.py" = ["S311"]  # sampling a corpus, not generating secrets
 
 [tool.mypy]
 python_version = "3.12"
