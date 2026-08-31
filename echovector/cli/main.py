@@ -13,6 +13,7 @@ from rich.table import Table
 
 from echovector import EchoVector, SearchFilter, __version__
 from echovector.audio.extract import SUPPORTED_PLAYERS, extract_clip, player_command
+from echovector.core import DEFAULT_CHUNK_SECONDS
 from echovector.embeddings.factory import backend_class_for
 from echovector.evaluation import RelevanceJudge, evaluate, load_golden_set
 from echovector.indexing.manifest import IndexManifest
@@ -82,7 +83,7 @@ def index(
     chunk_seconds: Annotated[
         float,
         typer.Option("--chunk-seconds", help="Audio chunk size to embed."),
-    ] = 10.0,
+    ] = DEFAULT_CHUNK_SECONDS,
     overlap_seconds: Annotated[
         float,
         typer.Option("--overlap-seconds", help="Overlap between adjacent chunks."),

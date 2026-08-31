@@ -46,6 +46,11 @@ FILTER_OVERFETCH = 5
 #: unrelated audio next to it and report a span the user did not ask for.
 SPAN_MERGE_RELATIVE_SCORE = 0.9
 
+#: Default chunk length. Measured on a long-form ESC-50 corpus: 5s scores
+#: nDCG@10 0.882 against 0.738 at 10s, because a 10s chunk usually spans two
+#: unrelated sounds and embeds a blend of both. See benchmarks/RESULTS.md.
+DEFAULT_CHUNK_SECONDS = 5.0
+
 #: Slack when comparing a file's stored mtime with the one on disk. Filesystems
 #: and archive tools round timestamps differently, so an exact match would
 #: report unchanged files as stale.
@@ -65,7 +70,7 @@ class EchoVector:
         store_dir: str | Path = ".echovector",
         backend: str | EmbeddingBackend = "clap",
         recursive: bool = True,
-        chunk_seconds: float = 10.0,
+        chunk_seconds: float = DEFAULT_CHUNK_SECONDS,
         overlap_seconds: float = 1.0,
         sample_rate: int = 48_000,
         index_type: str = DEFAULT_INDEX_TYPE,
@@ -78,7 +83,8 @@ class EchoVector:
             store_dir: Directory holding the vector index, metadata store, and manifest.
             backend: Embedding backend name, or an already-constructed backend.
             recursive: Whether directory targets are searched recursively.
-            chunk_seconds: Length of each embedded audio chunk.
+            chunk_seconds: Length of each embedded audio chunk. The default is
+                measured rather than assumed; see benchmarks/RESULTS.md.
             overlap_seconds: Overlap between adjacent chunks.
             sample_rate: Sample rate audio is resampled to before chunking.
             index_type: Vector index structure: "flat" (exact, the default),

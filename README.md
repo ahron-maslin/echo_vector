@@ -287,9 +287,16 @@ The structure is recorded in the manifest, so reopening a store uses what is act
 warns if you asked for something else. Use `echovector eval` to measure the recall you are trading
 away rather than assuming it.
 
-### Chunk length and the model's window
+### Chunk length
 
-`chunk_seconds` must fit the window the backend can embed. CLAP crops anything
+The default is **5 seconds**, chosen by measurement rather than assumption: on a
+long-form benchmark, quality falls away monotonically as chunks grow past that,
+because a long chunk blends several unrelated sounds into one embedding. At the
+old 10s default, nDCG@10 was 0.738 against 0.882 at 5s. Anything in roughly the
+3-5s band works well; see [benchmarks/RESULTS.md](benchmarks/RESULTS.md) for the
+full sweep, and use `echovector eval` to tune it for your own audio.
+
+`chunk_seconds` must also fit the window the backend can embed. CLAP crops anything
 longer than 10s to a *random* 10s window, which would make the embedding both
 non-deterministic and unrepresentative of the timestamp range stored beside it.
 EchoVector rejects the combination rather than indexing something misleading:
