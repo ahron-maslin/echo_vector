@@ -1,4 +1,5 @@
 import os
+import sys
 import tempfile
 from unittest.mock import patch
 
@@ -57,22 +58,21 @@ def test_extract_metadata_not_found() -> None:
         extract_metadata("nonexistent_file.wav")
 
 
-@patch("echovector.audio.processor.librosa")
+@patch("echovector.audio.processor.decode_with_fallback")
 @patch("echovector.audio.processor.sf")
-def test_audio_processor_load_librosa_fallback_stereo_to_mono(
-    mock_sf: patch, mock_librosa: patch, temp_audio_file: str
+def test_audio_processor_uses_the_fallback_decoder(
+    mock_sf: patch, mock_decode: patch, temp_audio_file: str
 ) -> None:
-    """Stereo audio loaded via the librosa fallback should downmix correctly.
+    """Stereo audio from the fallback decoder should downmix across channels.
 
-    librosa.load(mono=False) returns (channels, samples), unlike soundfile's
-    (samples, channels); the downmix must average across channels, not time.
+    The fallback returns (samples, channels), matching soundfile, so the
+    downmix must average across channels rather than time.
     """
     mock_sf.LibsndfileError = sf.LibsndfileError
     mock_sf.read.side_effect = sf.LibsndfileError("unsupported format")
 
-    left = np.full(1000, 1.0, dtype=np.float32)
-    right = np.full(1000, 3.0, dtype=np.float32)
-    mock_librosa.load.return_value = (np.stack([left, right]), 16000)
+    stereo = np.stack([np.full(1000, 1.0), np.full(1000, 3.0)], axis=1).astype(np.float32)
+    mock_decode.return_value = (stereo, 16000)
 
     processor = AudioProcessor(target_sample_rate=16000, mono=True)
     audio = processor.load_audio(temp_audio_file)
@@ -83,22 +83,38 @@ def test_audio_processor_load_librosa_fallback_stereo_to_mono(
 
 
 @patch("echovector.audio.metadata.sf.info")
-@patch("echovector.audio.metadata.librosa")
+@patch("echovector.audio.metadata.decode_with_fallback")
 def test_extract_metadata_fallback(
-    mock_librosa: patch, mock_sf_info: patch, temp_audio_file: str
+    mock_decode: patch, mock_sf_info: patch, temp_audio_file: str
 ) -> None:
     mock_sf_info.side_effect = Exception("soundfile failed")
-
-    mock_librosa.get_duration.return_value = 1.5
-    mock_librosa.get_samplerate.return_value = 16000
-
-    mock_y = np.zeros((2, 16000))
-    mock_librosa.load.return_value = (mock_y, 16000)
+    mock_decode.return_value = (np.zeros((16000, 2), dtype=np.float32), 16000)
 
     metadata = extract_metadata(temp_audio_file)
 
     assert metadata.channels == 2
     assert metadata.sample_rate == 16000
+    assert metadata.duration == pytest.approx(1.0)
+
+
+def test_fallback_decoder_explains_the_missing_extra(monkeypatch) -> None:
+    """Without librosa, an exotic format must say how to make it work."""
+    import builtins
+
+    from echovector.audio.decode import FALLBACK_EXTRA, decode_with_fallback
+
+    real_import = builtins.__import__
+
+    def blocked(name, *args, **kwargs):
+        if name.split(".")[0] == "librosa":
+            raise ModuleNotFoundError("No module named 'librosa'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", blocked)
+    monkeypatch.delitem(sys.modules, "librosa", raising=False)
+
+    with pytest.raises(ImportError, match=f"echo_vector\\[{FALLBACK_EXTRA}\\]"):
+        decode_with_fallback("weird.m4a")
 
 
 def test_audio_streamer(temp_audio_file: str) -> None:

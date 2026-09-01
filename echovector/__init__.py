@@ -9,9 +9,9 @@ from echovector.indexing.manifest import IndexMismatchError
 from echovector.search.filters import SearchFilter
 from echovector.search.results import SearchResult, TimestampRange
 
-# librosa falls back to its deprecated audioread loader for formats libsndfile
-# can't decode natively (e.g. m4a/aac), emitting a noisy FutureWarning we can't
-# act on from here.
+# librosa (an optional extra, used only to decode formats libsndfile can't read
+# natively such as m4a/aac) falls back to its deprecated audioread loader and
+# emits a FutureWarning we can't act on from here.
 warnings.filterwarnings(
     "ignore",
     message="librosa.core.audio.__audioread_load",

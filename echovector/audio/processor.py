@@ -1,9 +1,11 @@
 import os
 
-import librosa
 import numpy as np
 import numpy.typing as npt
 import soundfile as sf
+
+from echovector.audio import dsp
+from echovector.audio.decode import decode_with_fallback
 
 
 class AudioProcessor:
@@ -37,20 +39,14 @@ class AudioProcessor:
         try:
             audio, sample_rate = sf.read(file_path, dtype="float32", always_2d=False)
         except sf.LibsndfileError:
-            audio, sample_rate = librosa.load(file_path, sr=None, mono=False)
-            if audio.ndim > 1:
-                # librosa returns (channels, samples); soundfile returns (samples, channels).
-                audio = audio.T
+            audio, sample_rate = decode_with_fallback(file_path)
 
         if self.mono and audio.ndim > 1:
             audio = np.mean(audio, axis=1)
 
         if sample_rate != self.target_sample_rate:
-            audio = librosa.resample(
-                y=audio,
-                orig_sr=int(sample_rate),
-                target_sr=self.target_sample_rate,
-                axis=0,
+            audio = dsp.resample(
+                np.asarray(audio, dtype=np.float32), int(sample_rate), self.target_sample_rate
             )
 
         return np.asarray(audio, dtype=np.float32)

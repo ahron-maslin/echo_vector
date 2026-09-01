@@ -79,7 +79,7 @@ substitute for transcription, and a good complement to it.
 
 ```bash
 pip install "echo_vector[clap]"     # with semantic search (needs PyTorch)
-pip install echo_vector             # ~50 MB, no model stack
+pip install echo_vector             # no model stack
 ```
 
 Or with uv:
@@ -93,11 +93,29 @@ by default — and nothing except the model backends needs them. Indexing, searc
 and evaluation all run without. So the base install stays small and asks for the heavy half by name;
 `echovector` tells you exactly what to run if you reach for a model backend without it.
 
-On a machine with no GPU, install the much smaller CPU build first:
+Measured on Linux/CPython 3.12:
+
+| install | on disk | what you get |
+|---------|---------|--------------|
+| `echo_vector` | **142 MB** | indexing, search, eval, watch — `local` backend |
+| `echo_vector[clap]` with CPU torch | ~750 MB | semantic text and audio search |
+| `echo_vector[clap]` with default (CUDA) torch | ~4.2 GB | the same, plus GPU |
+
+The base install carries no PyTorch, and no librosa either: librosa pulls numba
+and llvmlite for another 345 MB, and EchoVector only used it to resample and to
+compute four spectral statistics. Resampling now goes through
+[soxr](https://github.com/dofuuz/python-soxr) — half a megabyte, and the library
+librosa resamples with anyway, so the output is bit-identical — and the
+statistics are computed directly with numpy.
+
+librosa is still available as `echo_vector[formats]` for decoding m4a/aac, which
+libsndfile cannot read. WAV, FLAC, OGG, and MP3 need nothing extra.
+
+On a machine with no GPU, install the much smaller CPU build of torch first:
 
 ```bash
 pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install "echo_vector[clap]"     # ~200 MB total
+pip install "echo_vector[clap]"
 ```
 
 The `clap` extra also enables the `wav2vec2`, `hubert`, and `ast` backends. The `local` backend

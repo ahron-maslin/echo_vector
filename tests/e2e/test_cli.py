@@ -75,7 +75,7 @@ def test_stats_reports_the_backend_that_built_the_index(tmp_path: Path) -> None:
     result = runner.invoke(app, ["stats", "--store-dir", str(store_dir), "--backend", "local"])
 
     assert result.exit_code == 0
-    assert "local:acoustic-v2" in result.stdout.replace("\n", "")
+    assert "local:acoustic-v3" in result.stdout.replace("\n", "")
 
 
 def test_device_flag_is_ignored_by_cpu_only_backends(tmp_path: Path) -> None:
@@ -687,3 +687,29 @@ def test_watch_with_unknown_backend_reports_error(tmp_path: Path) -> None:
     )
     assert result.exit_code == 1
     assert "Watch failed" in result.stdout
+
+
+def test_error_text_is_not_eaten_by_markup(tmp_path: Path, monkeypatch) -> None:
+    """Exception text is data, not Rich markup.
+
+    An install hint like `pip install 'echo_vector[clap]'` rendered as
+    `pip install 'echo_vector'` because Rich read `[clap]` as a style tag,
+    destroying the one thing the message exists to convey.
+    """
+    from echovector.cli import main as cli
+
+    def explode(*_args, **_kwargs):
+        raise RuntimeError("run: pip install 'echo_vector[clap]' [not-a-tag]")
+
+    monkeypatch.setattr(cli, "EchoVector", explode)
+    audio_path = tmp_path / "tone.wav"
+    _write_tone(audio_path)
+
+    result = runner.invoke(
+        app, ["index", str(audio_path), "--store-dir", str(tmp_path / "i"), "--backend", "local"]
+    )
+
+    assert result.exit_code == 1
+    flattened = result.stdout.replace("\n", "")
+    assert "echo_vector[clap]" in flattened
+    assert "[not-a-tag]" in flattened

@@ -2,11 +2,11 @@
 
 from typing import cast
 
-import librosa
 import numpy as np
 import numpy.typing as npt
 import soundfile as sf
 
+from echovector.audio import dsp
 from echovector.embeddings.base import EmbeddingBackend
 
 #: Lowest frequency treated as "bright" when placing a spectral centroid on the
@@ -33,7 +33,7 @@ class LocalFeatureBackend(EmbeddingBackend):
     @property
     def fingerprint(self) -> str:
         """Return the identity of this backend's feature definition."""
-        return f"local:acoustic-v2:sr={self.sample_rate}"
+        return f"local:acoustic-v3:sr={self.sample_rate}"
 
     def _log_frequency_position(self, hz: float) -> float:
         """Place a frequency on a 0-1 scale by octave rather than by hertz.
@@ -85,26 +85,17 @@ class LocalFeatureBackend(EmbeddingBackend):
         if audio.ndim > 1:
             audio = np.asarray(np.mean(audio, axis=1), dtype=np.float32)
         if sample_rate != self.sample_rate:
-            audio = librosa.resample(
-                y=audio,
-                orig_sr=int(sample_rate),
-                target_sr=self.sample_rate,
-                axis=0,
-            )
+            audio = dsp.resample(audio, int(sample_rate), self.sample_rate)
 
         if len(audio) == 0:
             return self._normalize(np.zeros(self.embedding_dim, dtype=np.float32))
 
         duration = len(audio) / self.sample_rate
         rms = float(np.sqrt(np.mean(np.square(audio))))
-        zcr = float(np.mean(librosa.feature.zero_crossing_rate(y=audio)[0]))
-        centroid = self._log_frequency_position(
-            float(np.mean(librosa.feature.spectral_centroid(y=audio, sr=self.sample_rate)[0]))
-        )
-        bandwidth = self._log_frequency_position(
-            float(np.mean(librosa.feature.spectral_bandwidth(y=audio, sr=self.sample_rate)[0]))
-        )
-        flatness = float(np.mean(librosa.feature.spectral_flatness(y=audio)[0]))
+        zcr = dsp.zero_crossing_rate(audio)
+        centroid = self._log_frequency_position(dsp.spectral_centroid(audio, self.sample_rate))
+        bandwidth = self._log_frequency_position(dsp.spectral_bandwidth(audio, self.sample_rate))
+        flatness = dsp.spectral_flatness(audio)
 
         features = np.array(
             [

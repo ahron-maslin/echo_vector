@@ -2,10 +2,11 @@
 
 from pathlib import Path
 
-import librosa
 import numpy as np
 import numpy.typing as npt
 import soundfile as sf
+
+from echovector.audio import dsp
 
 DEFAULT_SUBTYPE = "FLOAT"
 """Subtype used when writing clips.
@@ -100,7 +101,7 @@ def extract_clip(
     out_rate = source_rate
     if sample_rate is not None and sample_rate != source_rate:
         clip = np.asarray(
-            librosa.resample(y=clip, orig_sr=source_rate, target_sr=sample_rate, axis=0),
+            dsp.resample(clip, source_rate, sample_rate),
             dtype=np.float32,
         )
         out_rate = sample_rate

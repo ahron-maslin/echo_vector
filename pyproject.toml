@@ -32,7 +32,7 @@ dependencies = [
     "numpy>=1.26,<3",
     "pydantic>=2.5,<3",
     "soundfile>=0.12,<1",
-    "librosa>=0.10,<1",
+    "soxr>=0.3,<1",
     "faiss-cpu>=1.7,<2",
     "typer>=0.12,<1",
     "rich>=13.7,<14",
@@ -45,8 +45,15 @@ dependencies = [
 # needed only by the model backends -- clap, wav2vec2, hubert, ast -- so the
 # base install stays small and asks for them by name.
 clap = [
+    "echo_vector[formats]",
     "torch>=2.1,<3",
     "transformers>=4.36,<5",
+]
+# librosa decodes formats libsndfile cannot (m4a/aac), but pulls numba and
+# llvmlite -- around 345 MB -- so it is not carried just in case. WAV, FLAC,
+# OGG, and (with a recent libsndfile) MP3 need nothing extra.
+formats = [
+    "librosa>=0.10,<1",
 ]
 api = [
     "fastapi>=0.109,<1",
@@ -65,7 +72,7 @@ dev = [
     "mypy>=1.8,<2",
     "pre-commit>=3.6,<4",
 ]
-all = ["echo_vector[api,clap,dev]"]
+all = ["echo_vector[api,clap,dev,formats]"]
 
 [project.scripts]
 echovector = "echovector.cli.main:app"
@@ -141,6 +148,7 @@ module = [
     "soundfile",
     "transformers",
     "transformers.*",
+    "soxr",
     "torch",
     "torch.*",
     "torchaudio",

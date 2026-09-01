@@ -1,8 +1,9 @@
 import os
 from dataclasses import dataclass
 
-import librosa
 import soundfile as sf
+
+from echovector.audio.decode import decode_with_fallback
 
 
 @dataclass
@@ -41,11 +42,10 @@ def extract_metadata(file_path: str) -> AudioMetadata:
         channels = int(info.channels)
         fmt = str(info.format)
     except Exception:
-        # Fallback to librosa
-        duration = float(librosa.get_duration(path=file_path))
-        sample_rate = int(librosa.get_samplerate(file_path))
-        y, _ = librosa.load(file_path, sr=None, mono=False)
-        channels = int(y.shape[0]) if y.ndim > 1 else 1
+        # libsndfile could not read the header; decode it to find out instead.
+        audio, sample_rate = decode_with_fallback(file_path)
+        channels = int(audio.shape[1]) if audio.ndim > 1 else 1
+        duration = float(audio.shape[0]) / sample_rate
         fmt = str(os.path.splitext(file_path)[1].lstrip("."))
 
     return AudioMetadata(

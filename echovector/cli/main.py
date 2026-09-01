@@ -8,6 +8,7 @@ from typing import Annotated, Any
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.progress import Progress
 from rich.table import Table
 
@@ -33,6 +34,17 @@ DeviceOption = Annotated[
     str | None,
     typer.Option("--device", help="Model device, e.g. cpu or cuda. Ignored by CPU-only backends."),
 ]
+
+
+def _fail(what: str, exc: Exception) -> None:
+    """Print an error without letting Rich eat parts of the message.
+
+    Exception text is data, not markup. `pip install 'echo_vector[clap]'` would
+    otherwise render as `pip install 'echo_vector'` because Rich reads `[clap]`
+    as a style tag -- silently destroying the one thing the message exists to
+    convey.
+    """
+    console.print(f"[bold red]{what}:[/bold red] {escape(str(exc))}")
 
 
 def _backend_kwargs(backend: str, device: str | None) -> dict[str, Any]:
@@ -117,7 +129,7 @@ def index(
                 on_file_indexed=_on_file_indexed,
             )
     except Exception as exc:
-        console.print(f"[bold red]Indexing failed:[/bold red] {exc}")
+        _fail("Indexing failed", exc)
         raise typer.Exit(code=1) from exc
 
     console.print(f"[bold green]Indexing complete.[/bold green] Indexed {count} chunk(s).")
@@ -177,7 +189,7 @@ def search(
             max_per_file=max_per_file,
         )
     except Exception as exc:
-        console.print(f"[bold red]Search failed:[/bold red] {exc}")
+        _fail("Search failed", exc)
         raise typer.Exit(code=1) from exc
 
     _print_results(results, title=f"Top {len(results)} Results for '{query}'")
@@ -214,7 +226,7 @@ def similar(
             audio_path, top_k=top_k, exclude_source=not include_source
         )
     except Exception as exc:
-        console.print(f"[bold red]Similarity search failed:[/bold red] {exc}")
+        _fail("Similarity search failed", exc)
         raise typer.Exit(code=1) from exc
 
     _print_results(results, title=f"Sounds like '{audio_path.name}'")
@@ -235,7 +247,7 @@ def extract(
     try:
         written = extract_clip(audio_path, start, end, out_path=out_path, padding=padding)
     except Exception as exc:
-        console.print(f"[bold red]Extract failed:[/bold red] {exc}")
+        _fail("Extract failed", exc)
         raise typer.Exit(code=1) from exc
 
     console.print(f"[bold green]Wrote[/bold green] {written}")
@@ -259,7 +271,7 @@ def play(
     try:
         argv = player_command(audio_path, start, end, player=player)
     except Exception as exc:
-        console.print(f"[bold red]Cannot build a play command:[/bold red] {exc}")
+        _fail("Cannot build a play command", exc)
         raise typer.Exit(code=1) from exc
 
     console.print(shlex.join(argv))
@@ -315,7 +327,7 @@ def evaluate_index(
             judge=RelevanceJudge(min_overlap_fraction=min_overlap),
         )
     except Exception as exc:
-        console.print(f"[bold red]Evaluation failed:[/bold red] {exc}")
+        _fail("Evaluation failed", exc)
         raise typer.Exit(code=1) from exc
 
     if as_json:
@@ -379,7 +391,8 @@ def watch(
 
     def _report(event: WatchEvent) -> None:
         if event.kind == "failed":
-            console.print(f"[bold red]![/bold red] {event.filepath.name} [dim]{event.error}[/dim]")
+            detail = escape(event.error or "")
+            console.print(f"[bold red]![/bold red] {event.filepath.name} [dim]{detail}[/dim]")
             return
         mark, colour = symbols[event.kind]
         detail = f" [dim]({event.chunks} chunks)[/dim]" if event.chunks else ""
@@ -402,7 +415,7 @@ def watch(
     except KeyboardInterrupt:
         console.print("\n[dim]Stopped.[/dim]")
     except Exception as exc:
-        console.print(f"[bold red]Watch failed:[/bold red] {exc}")
+        _fail("Watch failed", exc)
         raise typer.Exit(code=1) from exc
 
 
@@ -437,7 +450,7 @@ def prune(
                 if not Path(path).exists()
             ]
     except Exception as exc:
-        console.print(f"[bold red]Prune failed:[/bold red] {exc}")
+        _fail("Prune failed", exc)
         raise typer.Exit(code=1) from exc
 
     verb = "Would remove" if check_only else "Removed"
@@ -468,7 +481,7 @@ def stats(
         )
         stats_data = engine.stats()
     except Exception as exc:
-        console.print(f"[bold red]Stats failed:[/bold red] {exc}")
+        _fail("Stats failed", exc)
         raise typer.Exit(code=1) from exc
 
     table = Table(title="Index Statistics", show_header=False)

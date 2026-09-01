@@ -140,7 +140,7 @@ def test_manifest_records_how_the_index_was_built(tmp_path: Path) -> None:
 
     stats = _engine(store, chunk_seconds=2.0, overlap_seconds=0.5).stats()
 
-    assert stats["backend"] == "local:acoustic-v2:sr=16000"
+    assert stats["backend"] == "local:acoustic-v3:sr=16000"
     assert stats["chunk_seconds"] == 2.0
     assert stats["overlap_seconds"] == 0.5
     assert stats["sample_rate"] == 16_000
