@@ -67,13 +67,20 @@ specific description than a bare class name.
 
 | | CLAP | `local` |
 |---|---|---|
-| Index throughput | 4.1 chunks/sec | 29.7 chunks/sec |
-| 500 clips indexed in | 122s | 17s |
+| Index throughput | 4.1 chunks/sec | 13.4 chunks/sec |
+| 500 clips indexed in | 122s | 37s |
 | Query latency (p50) | 67 ms | 1.6 ms |
 
 Query latency is dominated by embedding the query text through CLAP, not by the
 vector search. At this rate a 60,000-file library takes roughly four hours to
 index on CPU; a GPU changes that substantially.
+
+The `local` backend was 29.7 chunks/sec when its spectral features came from
+librosa, whose numba-compiled kernels are faster than the plain numpy that
+replaced them. That trade bought a 340 MB smaller install and costs nothing that
+matters: `local` exists for smoke tests, and CLAP — the backend anyone measures
+with — is unaffected, since resampling moved to soxr, which is what librosa used
+underneath. Its retrieval scores are unchanged: still exactly at chance.
 
 ## ESC-50 long-form — chunk length and span merging
 
