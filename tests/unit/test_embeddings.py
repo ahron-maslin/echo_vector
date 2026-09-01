@@ -8,6 +8,11 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
+# torch and transformers are an optional extra, so a minimal install must still
+# be able to run the suite -- it just skips whatever needs the model stack.
+pytest.importorskip("torch")
+pytest.importorskip("transformers")
+
 from echovector.embeddings.base import (
     WaveformEmbeddingBackend,
     backend_fingerprint,

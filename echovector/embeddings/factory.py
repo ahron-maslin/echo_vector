@@ -5,6 +5,19 @@ from typing import Any, ClassVar
 
 from echovector.embeddings.base import EmbeddingBackend
 
+#: Optional extra that installs the heavy model stack. Named for the backend
+#: people come here wanting, though it enables the audio-only encoders too.
+MODEL_EXTRA = "clap"
+
+#: Backends whose module needs PyTorch and transformers, which the base install
+#: deliberately does not carry -- they add roughly 4 GB.
+_BACKENDS_NEEDING_MODELS = frozenset({"clap", "wav2vec2", "hubert", "ast"})
+
+
+class MissingBackendDependencyError(ImportError):
+    """Raised when a backend's module cannot be imported for lack of a dependency."""
+
+
 # Map backend names to their (module, class) for lazy import.
 _BACKEND_LOCATIONS: dict[str, tuple[str, str]] = {
     "clap": ("echovector.embeddings.clap", "ClapBackend"),
@@ -52,6 +65,8 @@ class EmbeddingFactory:
 
         Raises:
             ValueError: If the backend name is not registered.
+            MissingBackendDependencyError: If the backend needs a dependency the
+                current install does not have.
         """
         name_lower = name.lower()
 
@@ -62,10 +77,41 @@ class EmbeddingFactory:
                     f"Unknown embedding backend: '{name}'. Valid options are: {valid_names}"
                 )
             module_path, class_name = _BACKEND_LOCATIONS[name_lower]
-            module = importlib.import_module(module_path)
+            try:
+                module = importlib.import_module(module_path)
+            except ImportError as exc:
+                raise cls._missing_dependency_error(name_lower, exc) from exc
             cls._registry[name_lower] = getattr(module, class_name)
 
         return cls._registry[name_lower]
+
+    @staticmethod
+    def _missing_dependency_error(name: str, cause: ImportError) -> MissingBackendDependencyError:
+        """Explain a failed backend import in terms of what to install.
+
+        A bare `ModuleNotFoundError: No module named 'torch'` tells a user
+        nothing about how to fix it, and the model stack is an optional extra
+        precisely because most people should not download it by accident.
+
+        Args:
+            name: The backend that could not be loaded.
+            cause: The underlying import failure.
+
+        Returns:
+            An error naming the exact install command.
+        """
+        if name in _BACKENDS_NEEDING_MODELS:
+            return MissingBackendDependencyError(
+                f"The '{name}' backend needs PyTorch and transformers, which are not installed. "
+                f"They are an optional extra because they add roughly 4 GB:\n\n"
+                f"    pip install 'echo_vector[{MODEL_EXTRA}]'\n\n"
+                f"On a machine without a GPU, install the much smaller CPU build first:\n\n"
+                f"    pip install torch --index-url https://download.pytorch.org/whl/cpu\n"
+                f"    pip install 'echo_vector[{MODEL_EXTRA}]'\n\n"
+                f"The 'local' backend needs no extra, but is a smoke-test stand-in rather than "
+                f"a semantic search backend. (Underlying error: {cause})"
+            )
+        return MissingBackendDependencyError(f"Cannot load the '{name}' backend: {cause}")
 
     @classmethod
     def create(cls, name: str, **kwargs: Any) -> EmbeddingBackend:

@@ -77,23 +77,30 @@ substitute for transcription, and a good complement to it.
 ### Installation
 
 ```bash
-pip install echo_vector
+pip install "echo_vector[clap]"     # with semantic search (needs PyTorch)
+pip install echo_vector             # ~50 MB, no model stack
 ```
 
 Or with uv:
 
 ```bash
-uv add echo_vector
+uv add "echo_vector[clap]"
 ```
 
-> **Heads-up on install size.** The default CLAP backend depends on PyTorch, and on Linux `pip`
-> pulls the CUDA build by default — roughly 4 GB. For a CPU-only machine, install the small wheels
-> first:
->
-> ```bash
-> pip install torch --index-url https://download.pytorch.org/whl/cpu
-> pip install echo_vector
-> ```
+**Why the extra?** PyTorch and transformers add roughly 4 GB — on Linux `pip` pulls the CUDA build
+by default — and nothing except the model backends needs them. Indexing, search, the vector store,
+and evaluation all run without. So the base install stays small and asks for the heavy half by name;
+`echovector` tells you exactly what to run if you reach for a model backend without it.
+
+On a machine with no GPU, install the much smaller CPU build first:
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install "echo_vector[clap]"     # ~200 MB total
+```
+
+The `clap` extra also enables the `wav2vec2`, `hubert`, and `ast` backends. The `local` backend
+needs no extra, but it is a smoke-test stand-in rather than a real search backend.
 
 ### CLI Usage
 
@@ -405,13 +412,13 @@ mismatch instead.
 
 ## Supported Embedding Backends
 
-| Backend | Text → audio | Audio → audio | Notes |
-|---------|--------------|---------------|-------|
-| **CLAP** (default) | ✅ | ✅ | Text and audio share one space; the only backend that answers text queries |
-| `local` | ✅ | ✅ | Deterministic acoustic features. For offline smoke tests, not real search |
-| `wav2vec2` | ❌ | ✅ | Speech-pretrained encoder, mean-pooled |
-| `hubert` | ❌ | ✅ | Speech-pretrained encoder, mean-pooled |
-| `ast` | ❌ | ✅ | Audio Spectrogram Transformer, AudioSet-pretrained |
+| Backend | Text → audio | Audio → audio | Needs `[clap]` | Notes |
+|---------|--------------|---------------|----------------|-------|
+| **CLAP** (default) | ✅ | ✅ | yes | Text and audio share one space; the only backend that answers text queries |
+| `local` | ✅ | ✅ | no | Deterministic acoustic features. For offline smoke tests, not real search |
+| `wav2vec2` | ❌ | ✅ | yes | Speech-pretrained encoder, mean-pooled |
+| `hubert` | ❌ | ✅ | yes | Speech-pretrained encoder, mean-pooled |
+| `ast` | ❌ | ✅ | yes | Audio Spectrogram Transformer, AudioSet-pretrained |
 
 The audio-only backends have no text tower, so a text query against them raises
 `TextSearchUnsupportedError` pointing you at `search_by_audio`. Use them with `similar` when you

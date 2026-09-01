@@ -37,16 +37,23 @@ dependencies = [
     "typer>=0.12,<1",
     "rich>=13.7,<14",
     "tqdm>=4.66,<5",
-    "torch>=2.1,<3",
-    "transformers>=4.36,<5",
 ]
 
 [project.optional-dependencies]
+# PyTorch and transformers add roughly 4 GB (the Linux wheels pull CUDA by
+# default), which is a hard sell for someone trying a CLI on a whim. They are
+# needed only by the model backends -- clap, wav2vec2, hubert, ast -- so the
+# base install stays small and asks for them by name.
+clap = [
+    "torch>=2.1,<3",
+    "transformers>=4.36,<5",
+]
 api = [
     "fastapi>=0.109,<1",
     "uvicorn[standard]>=0.27,<1",
 ]
 dev = [
+    "echo_vector[clap]",
     "pytest>=8.0,<9",
     "pytest-cov>=5.0,<6",
     "pytest-asyncio>=0.23,<1",
@@ -58,7 +65,7 @@ dev = [
     "mypy>=1.8,<2",
     "pre-commit>=3.6,<4",
 ]
-all = ["echo_vector[api,dev]"]
+all = ["echo_vector[api,clap,dev]"]
 
 [project.scripts]
 echovector = "echovector.cli.main:app"
