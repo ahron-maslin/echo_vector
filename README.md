@@ -67,6 +67,7 @@ substitute for transcription, and a good complement to it.
 - ⚡ **FAISS-powered** — Exact `flat`, or approximate `ivf` / `hnsw` for large archives
 - 🔒 **Self-describing indexes** — a manifest pins the model that built a store, so it can't be queried with the wrong one
 - ♻️ **Change-aware** — edited files are re-indexed, deleted ones are pruned, long runs checkpoint
+- 👀 **Watch mode** — `watch` keeps an index current as a folder changes
 - 🔌 **Pluggable backends** — CLAP for text search; wav2vec2, HuBERT, and AST for audio-to-audio
 - 🧪 **Offline smoke backend** — `local` backend for CI/Kaggle tests without model downloads
 - 🌐 **REST API** — Optional FastAPI server with background indexing jobs
@@ -163,6 +164,29 @@ echovector prune
 # See what would change without touching the index
 echovector prune --check
 ```
+
+Or let it maintain itself. `watch` rescans on an interval and keeps the index in
+step with the folder until you stop it:
+
+```bash
+echovector watch ./sound-library --interval 30
+```
+
+```
+Watching 12,431 file(s), rescanning every 30s. Ctrl-C to stop.
++ birds-042.wav (3 chunks)
+~ street-07.wav (8 chunks)
+- old-take.wav
+```
+
+A file that is still being copied in is left alone until its size and timestamp
+stop changing, so a half-written recording is never indexed as though it were
+complete — which would be doubly bad, since it would then look up to date. One
+unreadable file is reported and skipped rather than ending the watch.
+
+It polls rather than using filesystem events, deliberately: audio libraries live
+on network shares, external drives, and sync clients, where native events are
+unreliable or missing entirely.
 
 ### Measuring search quality
 

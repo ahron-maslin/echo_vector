@@ -619,3 +619,71 @@ def test_prune_without_an_index_says_so(tmp_path: Path) -> None:
     result = runner.invoke(app, ["prune", "--store-dir", str(tmp_path / "nope")])
     assert result.exit_code == 1
     assert "No index found" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# watch
+# ---------------------------------------------------------------------------
+
+
+def test_watch_indexes_new_files_then_stops(tmp_path: Path, monkeypatch) -> None:
+    """Driven through the CLI with no reliance on wall-clock timing.
+
+    Two scans, not one: a file must hold its signature steady across a scan
+    before the watcher will read it, so a half-written copy is never indexed.
+    """
+    from echovector.watch import FolderWatcher
+
+    audio_dir = tmp_path / "audio"
+    audio_dir.mkdir()
+    _write_tone(audio_dir / "tone.wav")
+    store_dir = tmp_path / "index"
+
+    real_run = FolderWatcher.run
+    monkeypatch.setattr(
+        FolderWatcher,
+        "run",
+        lambda self, **kwargs: real_run(self, **{**kwargs, "max_scans": 2, "interval": 0.01}),
+    )
+
+    result = runner.invoke(
+        app,
+        ["watch", str(audio_dir), "--store-dir", str(store_dir), "--backend", "local"],
+    )
+
+    assert result.exit_code == 0
+    assert "Watching 1 file(s)" in result.stdout
+    assert "tone.wav" in result.stdout
+    assert "chunks" in result.stdout
+
+
+def test_watch_reports_a_clean_stop_on_interrupt(tmp_path: Path, monkeypatch) -> None:
+    from echovector.watch import FolderWatcher
+
+    audio_dir = tmp_path / "audio"
+    audio_dir.mkdir()
+    _write_tone(audio_dir / "tone.wav")
+
+    def interrupt(self, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(FolderWatcher, "run", interrupt)
+    result = runner.invoke(
+        app,
+        ["watch", str(audio_dir), "--store-dir", str(tmp_path / "i"), "--backend", "local"],
+    )
+
+    assert result.exit_code == 0
+    assert "Stopped." in result.stdout
+
+
+def test_watch_with_unknown_backend_reports_error(tmp_path: Path) -> None:
+    audio_dir = tmp_path / "audio"
+    audio_dir.mkdir()
+    _write_tone(audio_dir / "tone.wav")
+    result = runner.invoke(
+        app,
+        ["watch", str(audio_dir), "--store-dir", str(tmp_path / "i"), "--backend", "nope"],
+    )
+    assert result.exit_code == 1
+    assert "Watch failed" in result.stdout

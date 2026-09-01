@@ -18,6 +18,7 @@ from echovector.embeddings.factory import backend_class_for
 from echovector.evaluation import RelevanceJudge, evaluate, load_golden_set
 from echovector.indexing.manifest import IndexManifest
 from echovector.search.results import SearchResult
+from echovector.watch import DEFAULT_INTERVAL_SECONDS, FolderWatcher, WatchEvent
 
 app = typer.Typer(
     name="echovector",
@@ -344,6 +345,65 @@ def _print_results(results: list[SearchResult], title: str) -> None:
         )
 
     console.print(table)
+
+
+@app.command()
+def watch(
+    files: Annotated[
+        list[Path],
+        typer.Argument(help="Audio files or directories to keep indexed."),
+    ],
+    recursive: Annotated[
+        bool,
+        typer.Option("--recursive/--no-recursive", "-r", help="Search directories recursively."),
+    ] = True,
+    store_dir: StoreDirOption = Path(".echovector"),
+    backend: BackendOption = "clap",
+    device: DeviceOption = None,
+    interval: Annotated[
+        float,
+        typer.Option("--interval", help="Seconds between rescans."),
+    ] = DEFAULT_INTERVAL_SECONDS,
+    chunk_seconds: Annotated[
+        float,
+        typer.Option("--chunk-seconds", help="Audio chunk size to embed."),
+    ] = DEFAULT_CHUNK_SECONDS,
+) -> None:
+    """Keep an index current as a folder changes, until interrupted.
+
+    Files that appear are indexed, files that change are re-read, and files that
+    are deleted are dropped. A file still being copied in is left alone until it
+    stops changing, so a half-written recording is never indexed as if complete.
+    """
+    symbols = {"added": ("+", "green"), "changed": ("~", "yellow"), "removed": ("-", "red")}
+
+    def _report(event: WatchEvent) -> None:
+        if event.kind == "failed":
+            console.print(f"[bold red]![/bold red] {event.filepath.name} [dim]{event.error}[/dim]")
+            return
+        mark, colour = symbols[event.kind]
+        detail = f" [dim]({event.chunks} chunks)[/dim]" if event.chunks else ""
+        console.print(f"[{colour}]{mark}[/{colour}] {event.filepath.name}{detail}")
+
+    try:
+        engine = EchoVector(
+            store_dir=store_dir,
+            backend=backend,
+            chunk_seconds=chunk_seconds,
+            **_backend_kwargs(backend, device),
+        )
+        watcher = FolderWatcher(engine, files, recursive=recursive)
+        watched = len(engine.resolve_audio_files(files, recursive=recursive))
+        console.print(
+            f"[bold green]Watching[/bold green] {watched} file(s), rescanning every "
+            f"{interval:g}s. [dim]Ctrl-C to stop.[/dim]"
+        )
+        watcher.run(interval=interval, on_event=_report)
+    except KeyboardInterrupt:
+        console.print("\n[dim]Stopped.[/dim]")
+    except Exception as exc:
+        console.print(f"[bold red]Watch failed:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
 
 
 @app.command()
