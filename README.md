@@ -28,6 +28,10 @@ Sound:   Audio → Audio Chunks → Audio Embeddings ─┐
          Text Query → Text Embedding ─────────────┴─► ANN Search → Timestamped moments
 ```
 
+> **Want to help?** The long-term aim is to search speech by matching text directly against
+> audio, without a transcript. That is unsolved. [GOALS.md](GOALS.md) lays out the goal, what
+> has been measured, and where contributions would matter most.
+
 ### Why speech goes through a transcript
 
 Matching a query against audio without recovering the words was measured and does not pay off:
