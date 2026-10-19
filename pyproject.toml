@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "echo_vector"
 dynamic = ["version"]
-description = "Semantic text search over audio files without full transcription"
+description = "Search audio by meaning: concept search over recorded speech, and text-to-sound search"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

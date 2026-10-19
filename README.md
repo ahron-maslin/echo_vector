@@ -1,6 +1,6 @@
 # 🔊 EchoVector
 
-> **Semantic text search over audio files — without full transcription.**
+> **Search audio by meaning: what was said in recorded speech, and how non-speech sounds sound.**
 
 [![CI](https://github.com/ahron-maslin/echo_vector/actions/workflows/workflow.yml/badge.svg)](https://github.com/ahron-maslin/echo_vector/actions/workflows/workflow.yml)
 [![Coverage](https://img.shields.io/badge/coverage-%3E95%25-brightgreen)](.)
@@ -11,13 +11,37 @@
 
 ## What is EchoVector?
 
-EchoVector indexes audio by embedding the **waveform itself**, then finds moments in it from a
-plain-language description of *how they sound* — no transcription anywhere in the pipeline.
+EchoVector finds moments in audio from a plain-language query. It has two search paths, because
+*what was said* and *how something sounds* need different machinery:
+
+| | Speech (`echovector speech`) | Sound (`echovector search`) |
+|---|---|---|
+| Finds | passages by meaning: "the threshold at the entrance" | sounds: "glass breaking", "rain on a roof" |
+| How | transcribe once, embed the text | embed the waveform with CLAP |
+| Extra | `echo_vector[speech]` | `echo_vector[clap]` |
 
 ```
-Audio → Audio Chunks → Audio Embeddings ─┐
-                                          ├─► ANN Search → Timestamped moments
-Text Query → Text Embedding ──────────────┘
+Speech:  Audio → whisper (once) → word windows → text embeddings ─┐
+         Query  → embedding + sound-alike spellings ──────────────┴─► Timestamped passages
+
+Sound:   Audio → Audio Chunks → Audio Embeddings ─┐
+         Text Query → Text Embedding ─────────────┴─► ANN Search → Timestamped moments
+```
+
+### Why speech goes through a transcript
+
+Matching a query against audio without recovering the words was measured and does not pay off:
+a phoneme-level keyword scan was only 1.6x faster than whisper, has no index (every query rescans
+every recording), and finds exact words only. Transcription is a one-time cost; the value is the
+search on top of it. Whisper spells one Hebrew term several ways within a single file
+("escoopa", "scuba", "is scuba"), so queries are expanded with the transcript's own sound-alike
+spellings, ranked by IPA similarity weighted by how often each occurs.
+
+```bash
+pip install 'echo_vector[speech]'
+echovector speech index ~/shiurim          # transcribes once, cached beside the index
+echovector speech search "the threshold at the entrance"
+echovector speech search escoopa
 ```
 
 ### Does it work?
@@ -49,12 +73,10 @@ revving". So EchoVector is built for audio where the sound is the content:
 
 ### What it is not for
 
-**Searching what people said.** CLAP encodes how audio *sounds*, not spoken content, so a query like
-`"the part where we discussed pricing"` has no acoustic signature to match and will not work.
-
-For speech, transcribe first and search the text — [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
-runs faster than real time on a laptop and answers that question directly. EchoVector is a poor
-substitute for transcription, and a good complement to it.
+**Searching what people said, with the sound path.** CLAP encodes how audio *sounds*, not spoken
+content, so a query like `"the part where we discussed pricing"` has no acoustic signature to
+match. Use `echovector speech` for that: it transcribes with
+[faster-whisper](https://github.com/SYSTRAN/faster-whisper) and searches the text by meaning.
 
 ## Features
 
