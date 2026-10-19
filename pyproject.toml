@@ -55,6 +55,16 @@ clap = [
 formats = [
     "librosa>=0.10,<1",
 ]
+# Concept search over spoken recordings: transcribe once, embed the text, and
+# expand queries by sound. No PyTorch -- faster-whisper and fastembed run on
+# CTranslate2 and ONNX.
+speech = [
+    "faster-whisper>=1.0,<2",
+    "fastembed>=0.3,<1",
+    "phonemizer>=3.2,<4",
+    "espeakng-loader>=0.2,<1",
+    "rapidfuzz>=3.6,<4",
+]
 api = [
     "fastapi>=0.109,<1",
     "uvicorn[standard]>=0.27,<1",
@@ -143,6 +153,12 @@ strict_equality = true
 [[tool.mypy.overrides]]
 module = [
     "faiss",
+    "faster_whisper",
+    "fastembed",
+    "phonemizer",
+    "phonemizer.*",
+    "espeakng_loader",
+    "rapidfuzz.*",
     "librosa",
     "librosa.*",
     "soundfile",

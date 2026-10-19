@@ -14,6 +14,7 @@ from rich.table import Table
 
 from echovector import EchoVector, SearchFilter, __version__
 from echovector.audio.extract import SUPPORTED_PLAYERS, extract_clip, player_command
+from echovector.cli.speech import speech_app
 from echovector.core import DEFAULT_CHUNK_SECONDS
 from echovector.embeddings.factory import backend_class_for
 from echovector.evaluation import RelevanceJudge, evaluate, load_golden_set
@@ -26,6 +27,7 @@ app = typer.Typer(
     help="EchoVector CLI for semantic text search over audio files.",
     add_completion=False,
 )
+app.add_typer(speech_app, name="speech")
 console = Console()
 
 StoreDirOption = Annotated[Path, typer.Option("--store-dir", help="Directory for index files.")]
