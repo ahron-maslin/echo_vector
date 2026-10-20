@@ -70,7 +70,7 @@ api = [
     "uvicorn[standard]>=0.27,<1",
 ]
 dev = [
-    "echo_vector[clap]",
+    "echo_vector[clap,speech]",
     "pytest>=8.0,<9",
     "pytest-cov>=5.0,<6",
     "pytest-asyncio>=0.23,<1",
