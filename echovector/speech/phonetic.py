@@ -37,7 +37,7 @@ def similarity(a: str, b: str) -> float:
     """Normalised edit similarity in [0, 1]."""
     if not a or not b:
         return 0.0
-    return 1.0 - Levenshtein.distance(a, b) / max(len(a), len(b))
+    return float(1.0 - Levenshtein.distance(a, b) / max(len(a), len(b)))
 
 
 def expand_query(
